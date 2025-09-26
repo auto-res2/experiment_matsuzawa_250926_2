@@ -1,0 +1,332 @@
+
+Input:
+You are an AI code reviewer specializing in validating base experiment foundations.
+
+Analyze the provided CORE experiment code (which contains placeholders for datasets/models) and determine if it implements a solid foundation that follows the base code generation requirements.
+
+# Instructions
+
+## Core Validation Criteria
+Check if the generated base code meets ALL of the following requirements:
+
+1. **Complete Core Logic Implementation**:
+   - Training loops are fully implemented (no placeholders in base training logic)
+   - Evaluation framework is complete with proper metrics calculation
+   - Model saving/loading mechanisms are implemented
+   - Result visualization and figure generation is complete
+
+2. **Proper Placeholder Strategy**:
+   - Uses clear, descriptive placeholders like `DATASET_PLACEHOLDER`, `MODEL_PLACEHOLDER`
+   - Placeholders are ONLY used for dataset-specific and model-specific components
+   - Core algorithm logic has NO placeholders
+   - Includes comments explaining what each placeholder will be replaced with
+
+3. **7-File Structure Compliance**:
+   - Contains EXACTLY these 7 required files:
+     * `src/train.py`
+     * `src/evaluate.py`
+     * `src/preprocess.py`
+     * `src/main.py`
+     * `pyproject.toml`
+     * `config/smoke_test.yaml`
+     * `config/full_experiment.yaml`
+   - No additional utility files, helper modules, or separate components
+   - All functionality is contained within the specified 7 files only
+
+4. **Command Line Interface & Module Structure**:
+   - main.py properly supports `--smoke-test` and `--full-experiment` flags
+   - Configuration system can handle different experimental scenarios
+   - Proper command-line argument parsing
+   - Import statements are compatible with `uv run python -m src.main` execution (relative imports like `from .train import train` are valid)
+
+5. **Publication-Ready Infrastructure**:
+   - Figure generation with proper formatting (PDF output, legends, annotations)
+   - Results saved as JSON files with stdout printing
+   - Consistent result formatting and comparison logic
+   - Proper experimental description output
+
+6. **PyTorch Framework Usage**:
+   - Uses PyTorch exclusively for deep learning components
+   - Proper model definition and training patterns
+   - Appropriate use of existing Python libraries
+
+7. **No Premature Specialization**:
+   - Does NOT assume specific datasets or models (uses placeholders appropriately)
+   - Does NOT contain real dataset loading code (should be placeholder)
+   - Focuses on base algorithm and evaluation framework
+
+## Output Format
+Respond with a JSON object containing:
+- `is_base_code_ready`: boolean - true if ALL base criteria are met, false otherwise
+- `base_code_issue`: string - specific issues found if any criteria are not met, focusing on base foundation quality
+
+# Current Research Method
+{
+    "Open Problems": "AUTOMATA shows that replacing full-data training runs by runs on small, informative subsets (e.g. 5 – 30 %) accelerates hyper-parameter search with little loss.  However, the subset size is fixed by the user.  • Too small → ranking of configurations becomes noisy and the optimiser discards good candidates.  • Too large → unnecessary computation.  A simple, automatic rule for adapting the subset fraction during the search is missing.",
+    "Methods": "Progressive-AUTOMATA (P-AUTOMATA).\nTake any AUTOMATA set–up (search + scheduler + GradMatchPB subsetter) and replace the fixed subset fraction f with a progressive schedule that increases f only when necessary.\n1. Initial fraction f ← f0  (e.g. 0.05).\n2. After each scheduler rung (i.e. all configurations have been evaluated once at the current fidelity) compute the ranking R_t of the top k configurations by validation accuracy.\n3. Measure ranking instability  Δ_t = 1 – |R_t ∩ R_{t-1}| / k  ( Jaccard complement between two successive rungs; Δ_t∈[0,1] ).\n4. If  Δ_t > ϵ  (e.g. ϵ = 0.3) increase the subset size  f ← min(γf, f_max) with γ = 2.\n5. Keep GradMatchPB unchanged but pass the current f.\n\nTheoretical intuition: The subset gradients approximate full-data gradients with error that drops as O(1/√n).  If rankings are unstable the variance term dominates; doubling n halves the standard error, giving a cheap adaptive bias–variance trade-off.  When rankings stabilise we stop growing f, saving compute.",
+    "Experimental Setup": "Base method: AUTOMATA + ASHA + Random Search, fixed f = 0.1.\nProposed: P-AUTOMATA with f0 = 0.05, γ = 2, ϵ = 0.3, f_max = 0.3.\nDatasets & models (single-GPU):\n• CIFAR-10 with ResNet-18 (same as paper).\n• SST-2 with 1-layer LSTM (same as paper).\nHyper-parameter space exactly as AUTOMATA (lr, hidden_size, batch_size…).\nBudget: 50 configurations, ASHA (η = 3) until 30 epochs (image) / 10 epochs (text).\nMetrics: (1) Best validation accuracy, (2) Wall-clock time, (3) Test accuracy of best config.\nRun 3 seeds and report mean ± std.",
+    "Experimental Code": "import time, copy, random\nimport torch\nfrom automata import GradMatchPB   # assumes AUTOMATA code base\n\ndef progressive_fraction(prev_rank, curr_rank, f, eps=0.3, gamma=2, f_max=0.3):\n    if not prev_rank:  # first rung\n        return f, curr_rank\n    k = len(curr_rank)\n    overlap = len(set(prev_rank) & set(curr_rank))\n    delta = 1 - overlap / k\n    if delta > eps:\n        f = min(gamma * f, f_max)\n    return f, curr_rank\n\n# pseudocode for one ASHA rung\nsubset_frac = 0.05\nprev_top = []\nfor rung in range(num_rungs):\n    top_scores = []\n    for cfg in rung_candidates:  # supplied by ASHA\n        subset = GradMatchPB(dataset, fraction=subset_frac, select_every=1)\n        model = build_model(cfg)\n        train(model, subset)\n        val_acc = evaluate(model, val_loader)\n        top_scores.append((val_acc, cfg))\n    # keep k best configs\n    top_scores.sort(reverse=True)\n    curr_top = [c for _, c in top_scores[:k]]\n    subset_frac, prev_top = progressive_fraction(prev_top, curr_top, subset_frac)\n",
+    "Expected Result": "• On CIFAR-10 the adaptive run is expected to start with f ≈ 0.05, rise to ≈0.2 by the second rung, and match the validation accuracy of fixed-0.1 AUTOMATA within 98-100 % while saving ~30 % total GPU time.\n• On SST-2 rankings typically stabilise early; f stops at 0.1 yielding identical accuracy to the baseline but ~40 % faster.\nAcross seeds the variance of validation accuracy is comparable to baseline, indicating the stability criterion prevents excessive noise.",
+    "Expected Conclusion": "A single, three-line heuristic that monitors configuration-ranking stability removes the need to hand-pick the subset fraction in AUTOMATA.  The Progressive-AUTOMATA variant preserves accuracy while cutting additional compute when small subsets suffice, and enlarging them only when gradient noise harms the search.  This minimal change makes subset-based HPO robust and completely self-tuning, further lowering the practical barrier to efficient hyper-parameter optimisation."
+}
+
+# Experimental Design
+
+## Experiment Strategy
+=================================================
+EXPERIMENT 1 – Real-World Compute–Savings Benchmark
+-------------------------------------------------
+Goal
+• Show that P-AUTOMATA reaches the same or better best-validation/test accuracy than the AUTOMATA baseline while reducing GPU time.
+• Demonstrate the automatic growth of the subset fraction and its impact on ranking stability.
+
+Set-up
+• Datasets & models (single A100, single seed per run, 3 runs for stats):
+  – CIFAR-10 + ResNet-18 (30 epochs max).
+  – SST-2 + 1-layer LSTM (10 epochs max).
+  – ImageNet-1k (subset 200 classes, 90 epochs) + MobileNet-V2 to stress larger data.
+• Methods compared:
+  a) AUTOMATA-Fixed-05  (f = 0.05)
+  b) AUTOMATA-Fixed-10  (f = 0.10 ⇒ default in paper)
+  c) AUTOMATA-Fixed-30  (f = 0.30 ⇒ upper bound)
+  d) Progressive-AUTOMATA (f0 = 0.05, γ = 2, ϵ = 0.30, fmax = 0.30)
+• Hyper-parameter space identical to original paper; 100 configurations; ASHA η = 3.
+• Metrics recorded per run:
+  1. Wall-clock GPU hours until ASHA terminates.
+  2. Best validation accuracy and final test accuracy.
+  3. Subset fraction f chosen at every rung.
+  4. Rank-instability Δt.
+
+Success Criterion
+P-AUTOMATA must
+• match or exceed the best-fixed-10 validation/test accuracy within confidence bounds (±0.2 %).
+• use ≥25 % less GPU hours than Fixed-10 on CIFAR-10 & SST-2; ≥15 % on ImageNet-1k.
+• exhibit monotonic decrease of Δt as f grows (empirical proof of bias–variance trade-off).
+
+What It Demonstrates
+Shows that (i) the adaptive schedule avoids under-sampling (compared to Fixed-05) and over-sampling (compared to Fixed-30), (ii) delivers state-of-the-art accuracy at lower cost, and (iii) the instability signal truly governs f.
+
+=================================================
+EXPERIMENT 2 – Ablation & Hyper-parameter Robustness Study
+---------------------------------------------------------
+Goal
+Is the heuristic truly parameter-free in practice?  Test sensitivity to f0, ϵ and γ and verify each component is necessary.
+
+Set-up
+• Focus on CIFAR-10 + ResNet-18; 50-configuration search to keep runs cheap (≈6 GPU h each on A100).
+• Variants (all other knobs identical):
+  1. FULL DATA – AUTOMATA with f = 1.00 (upper baseline).
+  2. P-AUTOMATA (default).
+  3. No-Growth: progressive logic disabled (f stuck at f0 = 0.05).
+  4. No-Instability-Check: always double f every rung (simulates γ-growth w/out Δt gate).
+  5. P-AUTOMATA with ϵ ∈ {0.1, 0.5}.
+  6. P-AUTOMATA with γ ∈ {1.5, 3}.
+• Metrics: best validation accuracy, GPU hours, final f, and Kendall-τ correlation between ranking at last rung vs FULL DATA.
+
+Success Criterion
+• Default P-AUTOMATA should be within 1 % top-1 accuracy of FULL DATA using ≤40 % of its GPU hours.
+• No-Growth loses ≥2 % accuracy (shows too-small subsets fail).
+• No-Instability-Check wastes ≥25 % more GPU than default with no accuracy gain (shows gate is needed).
+• Variations of ϵ, γ alter compute by <10 % and accuracy by <0.5 % (robustness).
+
+What It Demonstrates
+Pinpoints which parts of the heuristic matter, proves stability threshold is crucial, and shows wide tolerance to hyper-parameter choices—highlighting the method’s plug-and-play nature.
+
+=================================================
+EXPERIMENT 3 – Large-Scale Hyper-Parameter Optimisation at Scale
+----------------------------------------------------------------
+Goal
+Demonstrate scalability to modern, expensive models where subset selection is most valuable.
+
+Set-up
+• Task: Fine-tune BERT-Base on GLUE-MNLI (393 k examples) for 3 epochs.
+• Search space: learning rate, warm-up steps, batch size, weight decay, dropout (≈5D).
+• Budget: 400 configurations.
+• Scheduler: Population Based Training (PBT) inside AUTOMATA (already supported) – shows compatibility with non-ASHA schemes.
+• Fixed baselines: f ∈ {0.05, 0.10, 0.30}.
+• Progressive-AUTOMATA: f0 = 0.02, γ = 2, ϵ = 0.25, fmax = 0.30.
+• Hardware: 8 × A100 80 GB; each worker fine-tunes one config; search lasts ≤24 h.
+• Metrics
+  – Best validation accuracy on MNLI-m.
+  – GPU hours consumed per discovered Pareto-optimal config.
+  – Throughput (# configs completed / wall-clock).
+
+Success Criterion
+• P-AUTOMATA finds a configuration within 0.3 pp of the best validation accuracy achieved by any fixed-fraction run but consumes ≤60 % of the total GPU hours.
+• Time-to-first-good-config (<85 % of peak accuracy) is ≤40 % of the time for Fixed-10.
+• Subset fraction grows to f≈0.15 at late stages, confirming adaptivity.
+
+What It Demonstrates
+Highlights that the method scales to billion-parameter optimisations, integrates with more sophisticated schedulers (PBT), and drastically accelerates exploration where each full-data evaluation is expensive.
+
+=================================================
+Summary of Expected Demonstrations
+1. Real-world benchmarks verify compute savings with no accuracy loss.
+2. Ablation proves each design choice is justified and the heuristic is robust.
+3. Large-scale study showcases scalability, scheduler-agnostic nature, and dramatic wall-time reduction on state-of-the-art models.
+Together these experiments give a 360° validation of Progressive-AUTOMATA’s effectiveness.
+
+
+## Experiment Details
+================================================================================
+EXPERIMENT 1 – Real-World Compute-Savings Benchmark
+================================================================================
+1.  Data, Models & Baselines
+   • CIFAR-10 (50 k train / 10 k test, 32×32 RGB)  →  ResNet-18 (11.2 M params)
+   • SST-2 (67 k train / 872 dev / 1.8 k test, bin. sentiment)  →  1-layer Bi-LSTM + max-pool (3.1 M params)
+   • ImageNet-1k-200 (first 200 WordNet synsets, 256×256, ≈250 k imgs)  →  MobileNet-V2 (3.5 M params)
+   Baseline variants: AUTOMATA-Fixed-05 / 10 / 30.  Proposed: Progressive-AUTOMATA (P-AUTOMATA).
+
+2.  Pre-processing
+   • Image tasks: Random-resized-crop (224² for ImageNet-200, 32² for CIFAR) → RandomHorizontalFlip → ToTensor → Per-channel mean/std normalisation.
+   • SST-2: Lower-case, strip HTML, tokenizer = spaCy-en_core_web_sm, max_len=64 tokens, vocab built on train only (min-freq=2), OOV=UNK.
+
+3.  Splits & Folds
+   • CIFAR-10: Train/Val/Test = 45 k / 5 k / 10 k.  Stratified by class.
+   • SST-2: Original dev used as validation, test held-out.  No cross-validation.
+   • ImageNet-200: 90 % / 10 % split over official train, official val ⇒ test.
+
+4.  Search Space  (identical to AUTOMATA paper)
+   learning-rate ∈ [1e−4, 1e−1] (log-uniform)
+   batch-size ∈ {64, 128, 256}
+   weight-decay ∈ [1e−6, 1e−3]
+   dropout ∈ [0, 0.5] (text only)
+   momentum ∈ [0.6, 0.95] (image only)
+
+5.  Scheduler & Budget
+   • ASHA with η = 3, max-epochs = 30 (CIFAR), 10 (SST-2), 90 (ImageNet-200) → rungs at {1, 3, 9, 27} / {1, 3, 9} / {3, 9, 27, 81}.
+   • 100 configurations, 3 seeds (SEED = {17, 29, 43}).
+
+6.  Run Protocol
+   a) Start subset-fraction f = constant (baselines) or f0 = 0.05 (P-AUTOMATA).
+   b) Inside each ASHA rung call GradMatchPB(dataset, fraction=f) every epoch.
+   c) Adapt f using Δt heuristic (ϵ=0.30, γ=2, f_max = 0.30).
+   d) Track wall-clock by NVIDIA nsys; memory via torch.cuda.max_memory_allocated.
+
+7.  Repetition, Aggregation, Selection
+   • 3 seeds → report mean ± std.
+   • Inside a seed choose model snapshot with best validation accuracy (early-stop patience = 5 epochs).  In case of tie pick lower wall-clock.
+
+8.  Metrics
+   Primary:  Best-val-acc, Test-acc, GPU-hours.
+   Secondary:  Δt per rung, FLOPs/iter, max VRAM, bootstrap 95 % CI of accuracy, energy kWh (via NVIDIA-SMI power draw).
+
+9.  Robustness Checks (post-hoc, same weights)
+   • CIFAR-10-C (15 corruptions × 5 severities) → mCE.
+   • SST-2 OOD:  IMDB movie reviews (binary) re-tokenised identically → accuracy.
+   • ImageNet-C-200 (subset) → mCE.
+
+10. Hyper-parameter Importance
+    – Use fANOVA on training logs; visualise interaction of lr × batch, lr × f.
+
+11.  FLOPs & Cost Estimation
+    – ptflops package per forward pass × observed #batches.
+    – Spot price AWS p4d.24xlarge = 32 USD/h → compute cost.
+
+12.  Reference Code Snippet (PyTorch-like)
+```python
+from automata import GradMatchPB
+from ray import tune
+
+def train_one(cfg, datamodule, subset_fraction):
+    model = build_model(cfg)
+    criterion, opt = nn.CrossEntropyLoss(), SGD(model.parameters(), lr=cfg['lr'], momentum=cfg['mom'])
+    trainset = GradMatchPB(datamodule.train, fraction=subset_fraction)
+    loader = DataLoader(trainset, batch_size=cfg['bs'], shuffle=True, num_workers=8, pin_memory=True)
+    for ep in range(cfg['epochs']):
+        for x,y in loader:
+            opt.zero_grad(); model(x).loss(y).backward(); opt.step()
+```
+
+13.  Expected Outcomes (success criteria already specified in prompt).
+
+================================================================================
+EXPERIMENT 2 – Ablation & Hyper-parameter Robustness Study
+================================================================================
+1.  Data/Model:  CIFAR-10 + ResNet-18 only.
+2.  Variants:  Full-Data (f = 1), P-AUTOMATA default, No-Growth, No-Check, ϵ∈{0.1,0.5}, γ∈{1.5,3}.
+3.  Budget: 50 configs, ASHA, 3 seeds.
+4.  Additional Metrics
+   • Kendall-τ between last-rung ranking and Full-Data ranking.
+   • AUC of GPU-hours vs val-acc curve (lower better).
+5.  Robustness Analyses
+   • Gradient-noise measurement:  variance(||g_subset − g_full||₂) across 256 random mini-batches (compute full gradients once per variant, seed 0).
+6.  Hyper-parameter Sweep Method
+   • Latin-Hypercube across lr, batch, weight-decay to assure coverage.
+7.  Evaluation & Selection
+   • Same best-val rule; report mean ± sem over seeds.
+8.  FLOPs/Memory reported relative to Full-Data = 1×.
+9.  Example Analysis Script
+```bash
+python analyse_ablation.py --csv logs/ablation.csv --metric val_acc \
+       --group variant --plot kendall_tau --output figs/ktau.png
+```
+
+================================================================================
+EXPERIMENT 3 – Large-Scale Hyper-parameter Optimisation
+================================================================================
+1.  Task & Data
+   • GLUE MNLI (392 k train, matched/dev_m 9.8 k, mismatched/dev_mm 9.8 k).
+   • Tokeniser = HuggingFace WordPiece, max_len = 128, pad right.
+2.  Model:  BERT-Base-Uncased (110 M params).
+3.  Environment: 8 × A100 80 GB (DDP not required; each worker single GPU).
+4.  Search
+   • Hyper-space (5D): lr∈[8e-6, 5e-5]; warmup_ratio∈[0.02,0.1]; per-device-bs∈{16,32}; weight-decay∈[0,0.1]; dropout∈[0,0.3].
+   • 400 configs × PBT (exploit = top 20 %, explore = mutate 50 %), perturb-interval = 1/3 epoch.
+5.  Subset Schedules
+   • Fixed f ∈ {0.05,0.10,0.30}.  Progressive: f0 = 0.02, γ = 2, ϵ = 0.25, f_max = 0.30.
+6.  Splits
+   • 90 % train → train, 10 % → val (stratified by genre).  GLUE official dev_m used only for final test.
+7.  Metrics
+   Primary = val-acc (matched), Test = dev_m acc, GPU-hours, Throughput (#finished / h).
+   Secondary = time-to-first-good-cfg ≥85 % of best, Δt, f trajectory.
+8.  Early Stopping
+   • If val-acc has not improved ≥0.2 pp in 2 evaluation steps, worker relinquishes GPU.
+9.  Robustness & OOD
+   • HANS dataset for entailment heuristics; report accuracy.
+10.  Hyper-param Importance
+   • SHAP summary across completed configs.
+11.  Code Snippet (HF Accelerate + Ray Tune)
+```python
+from accelerate import Accelerator; import transformers as tf
+cfg = sample_config()
+subset = GradMatchPB(mnli_train, fraction=current_f)
+trainer = tf.Trainer(model, args, train_dataset=subset, eval_dataset=mnli_val,
+                     compute_metrics=lambda p: {'acc':(p.pred.argmax(-1)==p.label).mean()})
+trainer.train(); result = trainer.evaluate()
+```
+12.  Resource Logging
+   • wandb – log train_secs/epoch, mem_GB, current_f, Δt.
+
+================================================================================
+COMMON ANALYSES ACROSS ALL EXPERIMENTS
+--------------------------------------------------------------------------------
+A.  Noise / Distribution-Shift Robustness
+    – Corruption (-C) benchmarks, OOD datasets, plus FGSM ε = 2/255 adversarial test on CIFAR-10.
+B.  Hyper-parameter Heat-maps
+    – lr vs f vs accuracy contours.
+C.  Cost Metric Normalisation
+    – All GPU-hours converted to USD (AWS p4d rate) and Kg CO₂‐eq (0.39 kg/kWh).
+D.  Statistical Tests
+    – Paired t-test between P-AUTOMATA and Fixed-10 across seeds; Holm–Bonferroni correction.
+E.  Failure Handling (NO-FALLBACK)
+    – If dataset download fails ⇒ raise RuntimeError(“Dataset unavailable – abort experiment”).
+
+================================================================================
+SUMMARY TIMELINE (wall-clock on one A100)
+   • Exp-1  ≈  3 × (8 h CIFAR + 3 h SST + 20 h ImageNet-200)  ≈ 93 h.
+   • Exp-2  ≈  8 variants × 3 seeds × 6 h  ≈ 144 h.
+   • Exp-3  8 GPUs × 24 h  → 192 GPU-hours.
+Total GPU-hours baseline ≈ (93+144)*1.0 + 192 ≈ 429; expected savings 30–40 % with P-AUTOMATA.
+
+
+
+# Generated Base Code Files
+{"evaluate_py": "\"\"\"\nsrc/evaluate.py\nCommon evaluation \u0026 visualisation utilities (no placeholders).\nFigures are saved as publication-quality PDF files with annotated numeric values\nand their filenames are returned so that `src.main` can print them.\n\"\"\"\nfrom __future__ import annotations\n\nimport itertools\nimport json\nfrom pathlib import Path\nfrom typing import Dict, List, Tuple\n\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nimport torch\nfrom sklearn.metrics import confusion_matrix\n\n# ---------------------------------------------------------------------------\n# Metric utilities -----------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef compute_confusion_matrix(\n    model: torch.nn.Module,\n    loader: torch.utils.data.DataLoader,\n    device: torch.device,\n) -\u003e torch.Tensor:\n    model.eval()\n    all_preds, all_labels = [], []\n    with torch.no_grad():\n        for x, y in loader:\n            x = x.to(device)\n            logits = model(x)\n            all_preds.extend(logits.argmax(1).cpu().numpy())\n            all_labels.extend(y.numpy())\n    cm = confusion_matrix(all_labels, all_preds)\n    return torch.tensor(cm)\n\n\n# ---------------------------------------------------------------------------\n# Figure helpers -------------------------------------------------------------\n# ---------------------------------------------------------------------------\n\nsns.set(style=\"whitegrid\")\n\n\ndef _annotate_line(ax, xs: List[int], ys: List[float]):\n    for x, y in zip(xs, ys):\n        ax.annotate(f\"{y:.2f}\", (x, y), textcoords=\"offset points\", xytext=(0, 5), ha=\"center\")\n\n\ndef make_training_curves(\n    history: Dict[str, List[float]],\n    output_dir: Path,\n    tag: str = \"\",\n) -\u003e Tuple[str, str]:\n    # Loss\n    loss_fig = output_dir / f\"training_loss{tag}.pdf\"\n    fig, ax = plt.subplots()\n    xs = list(range(1, len(history[\"train_loss\"]) + 1))\n    ax.plot(xs, history[\"train_loss\"], label=\"Train\")\n    ax.plot(xs, history[\"val_loss\"], label=\"Val\")\n    _annotate_line(ax, xs, history[\"train_loss\"])\n    _annotate_line(ax, xs, history[\"val_loss\"])\n    ax.set_xlabel(\"Epoch\")\n    ax.set_ylabel(\"Loss\")\n    ax.set_title(\"Training vs Validation Loss\")\n    ax.legend()\n    fig.savefig(loss_fig, bbox_inches=\"tight\")\n    plt.close(fig)\n\n    # Accuracy\n    acc_fig = output_dir / f\"accuracy{tag}.pdf\"\n    fig, ax = plt.subplots()\n    ax.plot(xs, history[\"train_acc\"], label=\"Train\")\n    ax.plot(xs, history[\"val_acc\"], label=\"Val\")\n    _annotate_line(ax, xs, history[\"train_acc\"])\n    _annotate_line(ax, xs, history[\"val_acc\"])\n    ax.set_xlabel(\"Epoch\")\n    ax.set_ylabel(\"Accuracy (%)\")\n    ax.set_title(\"Training vs Validation Accuracy\")\n    ax.legend()\n    fig.savefig(acc_fig, bbox_inches=\"tight\")\n    plt.close(fig)\n\n    return loss_fig.name, acc_fig.name\n\n\ndef make_fraction_figure(f_traj: List[float], output_dir: Path) -\u003e str:\n    fig_path = output_dir / \"subset_fraction.pdf\"\n    fig, ax = plt.subplots()\n    xs = list(range(1, len(f_traj) + 1))\n    ax.plot(xs, f_traj, marker=\"o\")\n    _annotate_line(ax, xs, f_traj)\n    ax.set_xlabel(\"Rung\")\n    ax.set_ylabel(\"Subset fraction f\")\n    ax.set_title(\"Progressive-AUTOMATA subset fraction trajectory\")\n    fig.savefig(fig_path, bbox_inches=\"tight\")\n    plt.close(fig)\n    return fig_path.name\n\n\ndef make_instability_figure(delta_traj: List[float], output_dir: Path) -\u003e str:\n    fig_path = output_dir / \"ranking_instability.pdf\"\n    fig, ax = plt.subplots()\n    xs = list(range(1, len(delta_traj) + 1))\n    ax.bar(xs, delta_traj)\n    for x, y in zip(xs, delta_traj):\n        ax.annotate(f\"{y:.2f}\", (x, y), textcoords=\"offset points\", xytext=(0, 3), ha=\"center\")\n    ax.set_xlabel(\"Rung\")\n    ax.set_ylabel(\"\u0394\u209c\")\n    ax.set_title(\"Ranking Instability per Rung\")\n    fig.savefig(fig_path, bbox_inches=\"tight\")\n    plt.close(fig)\n    return fig_path.name\n", "full_experiment_yaml": "# config/full_experiment.yaml\n# Base template for **full** experiments.  Replace placeholders with concrete\n# dataset / model choices in subsequent steps.\nseed: 42\noutput_dir: outputs\n\n# Dataset --------------------------------------------------------------------\ndataset:\n  name: DATASET_PLACEHOLDER  # PLACEHOLDER: e.g. \"cifar10\", \"sst2\", ...\n  SPECIFIC_CONFIG_PLACEHOLDER: null       # e.g. path, augmentation params\n\n# Model ----------------------------------------------------------------------\nmodel:\n  name: MODEL_PLACEHOLDER    # PLACEHOLDER: e.g. \"resnet18\", \"lstm\", ...\n  SPECIFIC_CONFIG_PLACEHOLDER: null\n\n# Hyper-parameter search space ------------------------------------------------\nsearch_space:\n  learning_rate: {type: log_uniform, bounds: [1e-4, 1e-1]}\n  weight_decay:   {type: log_uniform, bounds: [1e-6, 1e-3]}\n  momentum:       {type: uniform,     bounds: [0.6, 0.95]}  # image only\n  dropout:        {type: uniform,     bounds: [0.0, 0.5]}   # text only\n\ntotal_configs: 100\nrungs: [1, 3, 9, 27]  # PLACEHOLDER: adjust max epoch per dataset\neta: 3\n\n# Progressive-AUTOMATA parameters --------------------------------------------\nprogressive_automata:\n  initial_fraction: 0.05\n  epsilon: 0.3\n  gamma: 2.0\n  f_max: 0.3\n  batch_size: 128\n\n# NOTE -----------------------------------------------------------------------\n# Only *dataset* and *model* placeholders need to be filled in later.  All\n# other logic (search, scheduler, evaluation) is already complete.\n# ---------------------------------------------------------------------------\n", "main_py": "\"\"\"\nsrc/main.py\nEntry-point that orchestrates the entire experiment (training + evaluation +\nvisualisation + saving).  Usage:\n\nuv run python -m src.main --smoke-test      # quick validation\nuv run python -m src.main --full-experiment # full run (placeholders remain)\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport json\nimport textwrap\nfrom datetime import datetime\nfrom pathlib import Path\nfrom typing import Dict\n\nimport torch\nimport yaml\n\nfrom . import evaluate as eval_utils\nfrom . import preprocess, train\n\n# ---------------------------------------------------------------------------\n# Helper functions -----------------------------------------------------------\n# ---------------------------------------------------------------------------\n\n\ndef _build_model(cfg: Dict):\n    name = cfg[\"model\"][\"name\"].lower()\n    if name == \"synthetic_mlp\":\n        in_dim = cfg[\"model\"].get(\"in_dim\", 32)\n        hidden = cfg[\"model\"].get(\"hidden\", 64)\n        n_classes = cfg[\"model\"].get(\"num_classes\", 4)\n        return torch.nn.Sequential(\n            torch.nn.Linear(in_dim, hidden),\n            torch.nn.ReLU(),\n            torch.nn.Linear(hidden, n_classes),\n        )\n    # ---------------------------------------------------------------------\n    # PLACEHOLDER: Will be replaced with specific model builders (ResNet-18,\n    # LSTM, MobileNet-V2, BERT, ...).\n    # ---------------------------------------------------------------------\n    raise NotImplementedError(\n        f\"Model \u0027{name}\u0027 not supported in common foundation \u2013 add implementation \"\n        \"in the next experiment step.\"\n    )\n\n\n# ---------------------------------------------------------------------------\n# Main run logic -------------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef run_experiment(cfg: Dict) -\u003e None:\n    device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n\n    # ---------- Data ---------------------------------------------------\n    dataloaders = preprocess.get_dataloaders(cfg, batch_size=cfg[\"progressive_automata\"][\"batch_size\"])\n\n    # ---------- HPO / Training ----------------------------------------\n    best_state, aux_info = train.run_hpo(cfg, dataloaders, _build_model, device)\n\n    # ---------- Test evaluation --------------------------------------\n    test_loader = dataloaders[\"test_loader\"]\n    test_loss, test_acc = train.ASHAScheduler._eval(None, best_state.model, test_loader)  # type: ignore\n\n    # ---------- Output paths -----------------------------------------\n    timestamp = datetime.now().strftime(\"%Y%m%d_%H%M%S\")\n    out_dir = Path(cfg[\"output_dir\"]) / timestamp\n    out_dir.mkdir(parents=True, exist_ok=True)\n\n    # ---------- Figures ----------------------------------------------\n    loss_fig, acc_fig = eval_utils.make_training_curves(best_state.history, out_dir)\n    frac_fig = eval_utils.make_fraction_figure(aux_info[\"subset_fraction_traj\"], out_dir)\n    instab_fig = eval_utils.make_instability_figure(aux_info[\"ranking_instability_traj\"], out_dir)\n\n    # ---------- Results JSON -----------------------------------------\n    results = {\n        \"best_val_accuracy\": best_state.best_val_acc,\n        \"best_val_epoch\": best_state.best_epoch,\n        \"test_accuracy\": test_acc,\n        \"wall_clock_time_sec\": aux_info[\"wall_clock_time_sec\"],\n        \"subset_fraction_traj\": aux_info[\"subset_fraction_traj\"],\n        \"ranking_instability_traj\": aux_info[\"ranking_instability_traj\"],\n        \"figures\": [loss_fig, acc_fig, frac_fig, instab_fig],\n    }\n    json_path = out_dir / \"results.json\"\n    with open(json_path, \"w\", encoding=\"utf-8\") as f:\n        json.dump(results, f, indent=2)\n\n    # ---------- Print to stdout --------------------------------------\n    descr = textwrap.dedent(\n        f\"\"\"\n        -----------------------------------------------------------------------\n        Experiment description\n        -----------------------------------------------------------------------\n        Dataset  : {cfg[\u0027dataset\u0027][\u0027name\u0027]}\n        Model    : {cfg[\u0027model\u0027][\u0027name\u0027]}\n        HPO      : Random Search + ASHA with \u03b7={cfg[\u0027eta\u0027]}, rungs={cfg[\u0027rungs\u0027]}\n        Progressive-AUTOMATA parameters: f0={cfg[\u0027progressive_automata\u0027][\u0027initial_fraction\u0027]}, \"\n        f_max={cfg[\u0027progressive_automata\u0027][\u0027f_max\u0027]}, \u03b5={cfg[\u0027progressive_automata\u0027][\u0027epsilon\u0027]}, \u03b3={cfg[\u0027progressive_automata\u0027][\u0027gamma\u0027]}\n        Seed     : {cfg.get(\u0027seed\u0027, 42)}\n        Output   : {out_dir}\n        -----------------------------------------------------------------------\n        \"\"\"\n    )\n    print(descr)\n    print(\"Experimental numerical data (JSON):\")\n    print(json.dumps(results, indent=2))\n    print(\"Figures saved:\")\n    for fig in results[\"figures\"]:\n        print(f\"  \u2013 {fig}\")\n\n\n# ---------------------------------------------------------------------------\n# CLI ------------------------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef parse_args():\n    p = argparse.ArgumentParser(description=\"Common Core Foundation \u2013 Progressive-AUTOMATA\")\n    group = p.add_mutually_exclusive_group(required=True)\n    group.add_argument(\"--smoke-test\", action=\"store_true\", help=\"Run quick synthetic smoke-test.\")\n    group.add_argument(\"--full-experiment\", action=\"store_true\", help=\"Run full experiment as configured.\")\n    return p.parse_args()\n\n\ndef main() -\u003e None:\n    args = parse_args()\n    cfg_path = Path(\"config/smoke_test.yaml\" if args.smoke_test else \"config/full_experiment.yaml\")\n    with open(cfg_path, \"r\", encoding=\"utf-8\") as f:\n        cfg = yaml.safe_load(f)\n    run_experiment(cfg)\n\n\nif __name__ == \"__main__\":\n    main()\n", "preprocess_py": "\"\"\"\nsrc/preprocess.py\nCommon data-loading / preprocessing utilities.  All dataset specific code is\nencapsulated in dedicated loader functions.  The *synthetic* dataset is fully\nimplemented so that smoke-tests run out-of-the-box.\n\"\"\"\nfrom __future__ import annotations\n\nfrom typing import Dict, Tuple\n\nimport torch\nfrom torch.utils.data import DataLoader, Dataset, random_split\n\n# ---------------------------------------------------------------------------\n# Synthetic dataset \u2013 used for smoke-tests -----------------------------------\n# ---------------------------------------------------------------------------\n\n\nclass SyntheticClassificationDataset(Dataset):\n    def __init__(self, n_samples: int = 2000, n_features: int = 32, n_classes: int = 4):\n        super().__init__()\n        self.x = torch.randn(n_samples, n_features)\n        self.y = torch.randint(0, n_classes, (n_samples,))\n\n    def __len__(self):\n        return self.x.size(0)\n\n    def __getitem__(self, idx):\n        return self.x[idx], self.y[idx]\n\n\n# ---------------------------------------------------------------------------\n# Loader registry ------------------------------------------------------------\n# ---------------------------------------------------------------------------\n\n\ndef _load_synthetic(cfg: Dict) -\u003e Tuple[Dataset, Dataset, Dataset]:\n    ds = SyntheticClassificationDataset(\n        n_samples=cfg.get(\"samples\", 2000),\n        n_features=cfg.get(\"features\", 32),\n        n_classes=cfg.get(\"classes\", 4),\n    )\n    val_size = int(0.2 * len(ds))\n    test_size = int(0.1 * len(ds))\n    train_size = len(ds) - val_size - test_size\n    train_ds, val_ds, test_ds = random_split(ds, [train_size, val_size, test_size])\n    return train_ds, val_ds, test_ds\n\n\n_DATASET_LOADERS = {\n    \"synthetic_classification\": _load_synthetic,\n    # ---------------------------------------------------------------------\n    # PLACEHOLDER: Will be replaced with specific dataset loading logic\n    # \"cifar10\": _load_cifar10,\n    # \"sst2\": _load_sst2,\n    # etc.\n    # ---------------------------------------------------------------------\n}\n\n\n# ---------------------------------------------------------------------------\n# Public API -----------------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef get_dataloaders(cfg: Dict, batch_size: int, num_workers: int = 4):\n    dataset_name = cfg[\"dataset\"][\"name\"].lower()\n    if dataset_name not in _DATASET_LOADERS:\n        raise NotImplementedError(\n            f\"Dataset \u0027{dataset_name}\u0027 not supported in common foundation \u2013 \"\n            \"add specific loader in next experiment step.\"\n        )\n\n    train_ds, val_ds, test_ds = _DATASET_LOADERS[dataset_name](cfg[\"dataset\"])\n\n    def _make_loader(ds, shuffle):\n        return DataLoader(\n            ds,\n            batch_size=batch_size,\n            shuffle=shuffle,\n            num_workers=num_workers,\n            pin_memory=torch.cuda.is_available(),\n        )\n\n    return {\n        \"train\": train_ds,\n        \"val_loader\": _make_loader(val_ds, shuffle=False),\n        \"test_loader\": _make_loader(test_ds, shuffle=False),\n    }\n", "pyproject_toml": "[build-system]\nrequires = [\"setuptools\u003e=61.0\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"progressive_automata_core\"\nversion = \"0.1.0\"\ndescription = \"Common Core Foundation for Progressive-AUTOMATA experiments\"\nreadme = \"README.md\"\nrequires-python = \"\u003e=3.9\"\nlicense = {text = \"MIT\"}\nauthors = [\n    {name = \"Research Team\", email = \"research@example.com\"},\n]\ndependencies = [\n    \"torch\u003e=2.0.0\",\n    \"torchvision\u003e=0.15.0\",\n    \"PyYAML\u003e=6.0\",\n    \"matplotlib\u003e=3.7.0\",\n    \"seaborn\u003e=0.12.2\",\n    \"scikit-learn\u003e=1.2.2\",\n    \"tqdm\u003e=4.65.0\",\n]\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n", "smoke_test_yaml": "# config/smoke_test.yaml\n# Minimal configuration that runs within seconds on CPU/GPU.\nseed: 123\noutput_dir: outputs\n\n# Dataset --------------------------------------------------------------------\ndataset:\n  name: synthetic_classification\n  samples: 2000\n  features: 32\n  classes: 4\n\n# Model ----------------------------------------------------------------------\nmodel:\n  name: synthetic_mlp\n  in_dim: 32\n  hidden: 64\n  num_classes: 4\n\n# Hyper-parameter search space (small) ---------------------------------------\nsearch_space:\n  learning_rate: {type: log_uniform, bounds: [1e-3, 1e-1]}\n  weight_decay:   {type: log_uniform, bounds: [1e-6, 1e-3]}\n  momentum:       {type: uniform,     bounds: [0.5, 0.95]}\n\ntotal_configs: 4\nrungs: [1, 2]\neta: 2\n\n# Progressive-AUTOMATA parameters --------------------------------------------\nprogressive_automata:\n  initial_fraction: 0.2\n  epsilon: 0.3\n  gamma: 2.0\n  f_max: 0.6\n  batch_size: 64\n", "train_py": "\"\"\"\nsrc/train.py\nCore training and hyper-parameter\u2013search logic that is shared by **all** experimental\nvariations.  Dataset/model specific parts are injected via the `config` object and\nimports in `src.preprocess` and `src.evaluate`.\n\nMain features\n-------------\n1. Progressive-AUTOMATA controller that adapts the subset fraction *f* using the\n   \u0394\u209c instability rule.\n2. GradMatchPB subset selection (external if available, otherwise internal\n   greedy fallback) \u2192 returns a `torch.utils.data.Subset` that is re-generated at\n   the beginning of every epoch.\n3. ASHA-style scheduler + random search over a YAML-defined search space.\n4. Full checkpointing and resume-in-memory between rungs so that promoted\n   configurations continue training rather than starting from scratch.\n5. Detailed per-epoch logging of loss / accuracy so that figures are identical\n   across all experiments.\n\nNOTE:\n-----\nOnly *dataset* and *model* instantiation are left as placeholders; everything\nelse is fully functional and production-ready.\n\"\"\"\nfrom __future__ import annotations\n\nimport copy\nimport json\nimport random\nimport time\nfrom collections import defaultdict\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\nfrom typing import Any, Dict, List, Tuple\n\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, Subset\nfrom tqdm import tqdm\n\n# ---------------------------------------------------------------------------\n# GradMatchPB subset selection ------------------------------------------------\n# ---------------------------------------------------------------------------\ntry:\n    # If the official implementation is installed use it.\n    from gradmatch import GradMatchPB  # type: ignore\nexcept Exception:  # pragma: no cover \u2013 internal fallback\n\n    class GradMatchPB:  # pylint: disable=too-few-public-methods\n        \"\"\"Light-weight fallback that performs *greedy gradient matching* on the\n        last-layer gradients.  Computationally costly but sufficient for small\n        smoke-tests and guarantees the common interface works even when the\n        external AUTOMATA package is unavailable.\n        \"\"\"\n\n        def __init__(\n            self,\n            dataset: torch.utils.data.Dataset,\n            model: nn.Module,\n            loss_fn: nn.Module,\n            fraction: float,\n            device: torch.device,\n            batch_size: int = 256,\n        ) -\u003e None:\n            self.dataset = dataset\n            self.model = model\n            self.loss_fn = loss_fn\n            self.fraction = fraction\n            self.device = device\n            self.batch_size = batch_size\n\n        def _compute_full_gradient(self) -\u003e torch.Tensor:\n            loader = DataLoader(self.dataset, batch_size=self.batch_size, shuffle=False)\n            full_grad = None\n            self.model.eval()\n            for x, y in loader:\n                x, y = x.to(self.device), y.to(self.device)\n                self.model.zero_grad()\n                loss = self.loss_fn(self.model(x), y)\n                loss.backward()\n                grad_vec = torch.cat([p.grad.flatten() for p in self.model.parameters() if p.grad is not None])\n                if full_grad is None:\n                    full_grad = grad_vec.detach().clone()\n                else:\n                    full_grad += grad_vec.detach()\n            return full_grad / len(loader)\n\n        def _compute_sample_gradients(self, indices: List[int]) -\u003e torch.Tensor:\n            grads = []\n            self.model.eval()\n            for idx in indices:\n                x, y = self.dataset[idx]\n                x = x.unsqueeze(0).to(self.device)\n                y = torch.tensor([y], device=self.device)\n                self.model.zero_grad()\n                loss = self.loss_fn(self.model(x), y)\n                loss.backward()\n                grad_vec = torch.cat([p.grad.flatten() for p in self.model.parameters() if p.grad is not None])\n                grads.append(grad_vec.detach())\n            return torch.stack(grads)\n\n        def select(self) -\u003e List[int]:\n            n_total = len(self.dataset)\n            m = max(1, int(self.fraction * n_total))\n            if m \u003e= n_total:\n                return list(range(n_total))\n\n            full_grad = self._compute_full_gradient()\n            selected: List[int] = []\n            remaining = list(range(n_total))\n            grads = self._compute_sample_gradients(remaining)\n            current_sum = torch.zeros_like(full_grad)\n\n            for _ in range(m):\n                # Greedy: pick sample that minimises |full_grad - (current_sum + g_i)|\n                residuals = full_grad - (current_sum.unsqueeze(0) + grads)\n                scores = residuals.norm(p=2, dim=1)\n                best_idx = torch.argmin(scores).item()\n                sel_global_idx = remaining.pop(best_idx)\n                selected.append(sel_global_idx)\n                current_sum += grads[best_idx]\n                grads = torch.cat([grads[:best_idx], grads[best_idx + 1 :]], dim=0)\n            return selected\n\n        # end class GradMatchPB\n\n# ---------------------------------------------------------------------------\n# Data-classes ----------------------------------------------------------------\n# ---------------------------------------------------------------------------\n@dataclass\nclass TrainState:\n    cfg_id: int\n    cfg: Dict[str, Any]\n    model: nn.Module\n    optimizer: optim.Optimizer\n    criterion: nn.Module\n    history: Dict[str, List[float]] = field(default_factory=lambda: defaultdict(list))\n    best_val_acc: float = 0.0\n    best_epoch: int = -1\n    epochs_trained: int = 0\n\n\n# ---------------------------------------------------------------------------\n# Utility functions -----------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef set_seed(seed: int) -\u003e None:\n    random.seed(seed)\n    np.random.seed(seed)\n    torch.manual_seed(seed)\n    torch.cuda.manual_seed_all(seed)\n    torch.backends.cudnn.deterministic = True  # type: ignore\n    torch.backends.cudnn.benchmark = False  # type: ignore\n\n\ndef accuracy_from_logits(logits: torch.Tensor, targets: torch.Tensor) -\u003e float:\n    preds = torch.argmax(logits, dim=1)\n    return (preds == targets).float().mean().item() * 100.0\n\n\n# ---------------------------------------------------------------------------\n# Training primitives ---------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef _train_single_epoch(\n    state: TrainState,\n    train_dataset: torch.utils.data.Dataset,\n    subset_fraction: float,\n    batch_size: int,\n    device: torch.device,\n) -\u003e Tuple[float, float]:\n    \"\"\"Train *one* epoch, (re-)building the subset at the beginning using\n    GradMatchPB.  Returns `(epoch_loss, epoch_acc)`.\n    \"\"\"\n\n    subset_selector = GradMatchPB(\n        train_dataset,\n        model=state.model,\n        loss_fn=state.criterion,\n        fraction=subset_fraction,\n        device=device,\n    )\n    subset_indices = subset_selector.select()\n    subset = Subset(train_dataset, subset_indices)\n\n    loader = DataLoader(\n        subset,\n        batch_size=batch_size,\n        shuffle=True,\n        num_workers=4,\n        pin_memory=torch.cuda.is_available(),\n    )\n\n    epoch_loss = 0.0\n    correct = 0\n    total = 0\n    state.model.train()\n    for inputs, targets in loader:\n        inputs, targets = inputs.to(device), targets.to(device)\n        state.optimizer.zero_grad()\n        outputs = state.model(inputs)\n        loss = state.criterion(outputs, targets)\n        loss.backward()\n        state.optimizer.step()\n\n        epoch_loss += loss.item() * inputs.size(0)\n        correct += (outputs.argmax(1) == targets).sum().item()\n        total += inputs.size(0)\n\n    epoch_loss /= total\n    epoch_acc = correct / total * 100.0\n    return epoch_loss, epoch_acc\n\n\n# ---------------------------------------------------------------------------\n# ASHA + Progressive-AUTOMATA -------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef adaptive_fraction(\n    prev_top: List[int],\n    curr_top: List[int],\n    f: float,\n    epsilon: float,\n    gamma: float,\n    f_max: float,\n) -\u003e Tuple[float, float]:\n    \"\"\"Implements steps (2)\u2013(4) of Progressive-AUTOMATA.  Returns new `(f, \u0394_t)`.\"\"\"\n    if not prev_top:\n        return f, 0.0\n    k = len(curr_top)\n    overlap = len(set(prev_top) \u0026 set(curr_top))\n    delta = 1.0 - overlap / k\n    if delta \u003e epsilon:\n        f = min(gamma * f, f_max)\n    return f, delta\n\n\nclass ASHAScheduler:\n    \"\"\"Minimal sequential ASHA implementation sufficient for the common base.\n\n    Runs *sequentially* on a single GPU \u2013 this keeps the foundation simple and\n    deterministic; later revisions can parallelise trivially by turning each\n    `TrainState` into an independent process.\n    \"\"\"\n\n    def __init__(\n        self,\n        search_space: Dict[str, Dict[str, Any]],\n        total_configs: int,\n        rungs: List[int],\n        eta: int,\n        device: torch.device,\n        subset_hyperparams: Dict[str, Any],\n        dataloaders: Dict[str, Any],\n        build_model_fn,\n        seed: int,\n    ) -\u003e None:\n        self.search_space = search_space\n        self.total_configs = total_configs\n        self.rungs = rungs\n        self.eta = eta\n        self.device = device\n        self.subset_hp = subset_hyperparams\n        self.dataloaders = dataloaders\n        self.build_model_fn = build_model_fn\n        self.seed = seed\n\n        # Internal state\n        self.configs: List[Dict[str, Any]] = []\n        self.states: Dict[int, TrainState] = {}\n        self._sample_configs()\n\n    # ---------------------------------------------------------------------\n    # Configuration sampling ------------------------------------------------\n    # ---------------------------------------------------------------------\n    def _sample_configs(self) -\u003e None:\n        random.seed(self.seed)\n        for cfg_id in range(self.total_configs):\n            cfg = {}\n            for hp_name, hp_def in self.search_space.items():\n                if hp_def[\"type\"] == \"log_uniform\":\n                    low, high = hp_def[\"bounds\"]\n                    val = 10 ** random.uniform(np.log10(low), np.log10(high))\n                elif hp_def[\"type\"] == \"uniform\":\n                    low, high = hp_def[\"bounds\"]\n                    val = random.uniform(low, high)\n                elif hp_def[\"type\"] == \"choice\":\n                    val = random.choice(hp_def[\"values\"])\n                else:\n                    raise ValueError(f\"Unknown hyperparameter type {hp_def[\u0027type\u0027]}\")\n                cfg[hp_name] = val\n            self.configs.append(cfg)\n\n    # ---------------------------------------------------------------------\n    # Training of a single configuration up to *target_epochs* --------------\n    # ---------------------------------------------------------------------\n    def _build_state(self, cfg_id: int, cfg: Dict[str, Any]) -\u003e TrainState:\n        model = self.build_model_fn(cfg).to(self.device)\n        criterion = nn.CrossEntropyLoss()\n        optimizer = optim.SGD(\n            model.parameters(),\n            lr=cfg[\"learning_rate\"],\n            momentum=cfg.get(\"momentum\", 0.9),\n            weight_decay=cfg.get(\"weight_decay\", 0.0),\n        )\n        return TrainState(cfg_id=cfg_id, cfg=cfg, model=model, optimizer=optimizer, criterion=criterion)\n\n    def _train_until(self, state: TrainState, target_epochs: int, subset_fraction: float, batch_size: int) -\u003e None:\n        train_ds = self.dataloaders[\"train\"]\n        val_loader = self.dataloaders[\"val_loader\"]\n        while state.epochs_trained \u003c target_epochs:\n            loss, acc = _train_single_epoch(\n                state,\n                train_dataset=train_ds,\n                subset_fraction=subset_fraction,\n                batch_size=batch_size,\n                device=self.device,\n            )\n            state.history[\"train_loss\"].append(loss)\n            state.history[\"train_acc\"].append(acc)\n            # Validation every epoch\n            val_loss, val_acc = self._eval(state.model, val_loader)\n            state.history[\"val_loss\"].append(val_loss)\n            state.history[\"val_acc\"].append(val_acc)\n            if val_acc \u003e state.best_val_acc:\n                state.best_val_acc = val_acc\n                state.best_epoch = state.epochs_trained\n            state.epochs_trained += 1\n\n    @torch.no_grad()\n    def _eval(self, model: nn.Module, loader: DataLoader) -\u003e Tuple[float, float]:\n        model.eval()\n        criterion = nn.CrossEntropyLoss()\n        total = 0\n        correct = 0\n        running_loss = 0.0\n        for x, y in loader:\n            x, y = x.to(self.device), y.to(self.device)\n            logits = model(x)\n            loss = criterion(logits, y)\n            running_loss += loss.item() * x.size(0)\n            total += x.size(0)\n            correct += (logits.argmax(1) == y).sum().item()\n        return running_loss / total, correct / total * 100.0\n\n    # ------------------------------------------------------------------\n    # Main outer-loop ---------------------------------------------------\n    # ------------------------------------------------------------------\n    def run(self) -\u003e Tuple[TrainState, Dict[str, Any]]:\n        f = self.subset_hp[\"initial_fraction\"]\n        epsilon = self.subset_hp[\"epsilon\"]\n        gamma = self.subset_hp[\"gamma\"]\n        f_max = self.subset_hp[\"f_max\"]\n        batch_size = self.subset_hp[\"batch_size\"]\n\n        time_start = time.time()\n        prev_top: List[int] = []\n        f_traj: List[float] = []\n        delta_traj: List[float] = []\n\n        active_cfg_ids = list(range(self.total_configs))\n        for rung_idx, target_epoch in enumerate(self.rungs):\n            print(f\"\\n=== RUNG {rung_idx} \u2013 target {target_epoch} epochs \u2013 subset-fraction f={f:.3f} ===\")\n            # Promote states to next rung\n            new_states: Dict[int, TrainState] = {}\n            for cfg_id in active_cfg_ids:\n                cfg = self.configs[cfg_id]\n                if cfg_id not in self.states:\n                    self.states[cfg_id] = self._build_state(cfg_id, cfg)\n                self._train_until(self.states[cfg_id], target_epoch, f, batch_size)\n                new_states[cfg_id] = self.states[cfg_id]\n\n            # Ranking\n            scores = sorted(\n                [(s.best_val_acc, s.cfg_id) for s in new_states.values()], reverse=True\n            )\n            k = max(1, len(scores) // self.eta)\n            curr_top = [cfg_id for _, cfg_id in scores[:k]]\n            print(f\"Top-k ({k}) cfgs this rung: {curr_top}\")\n\n            # Progressive fraction update\n            f, delta = adaptive_fraction(prev_top, curr_top, f, epsilon, gamma, f_max)\n            prev_top = curr_top.copy()\n            f_traj.append(f)\n            delta_traj.append(delta)\n\n            # Prune low performers for next rung\n            active_cfg_ids = curr_top\n\n        # End of rungs \u2192 pick best overall\n        best_state = max((self.states[cfg_id] for cfg_id in active_cfg_ids), key=lambda s: s.best_val_acc)\n        wall_clock = time.time() - time_start\n\n        aux_info = {\n            \"subset_fraction_traj\": f_traj,\n            \"ranking_instability_traj\": delta_traj,\n            \"wall_clock_time_sec\": wall_clock,\n        }\n        return best_state, aux_info\n\n\n# ---------------------------------------------------------------------------\n# Public API -----------------------------------------------------------------\n# ---------------------------------------------------------------------------\n\ndef run_hpo(\n    config: Dict[str, Any],\n    dataloaders: Dict[str, Any],\n    build_model_fn,\n    device: torch.device,\n) -\u003e Tuple[TrainState, Dict[str, Any]]:\n    \"\"\"Entry point used by `src.main`.  Returns `(best_state, aux_info)`.\"\"\"\n    scheduler = ASHAScheduler(\n        search_space=config[\"search_space\"],\n        total_configs=config[\"total_configs\"],\n        rungs=config[\"rungs\"],\n        eta=config[\"eta\"],\n        device=device,\n        subset_hyperparams=config[\"progressive_automata\"],\n        dataloaders=dataloaders,\n        build_model_fn=build_model_fn,\n        seed=config.get(\"seed\", 42),\n    )\n    return scheduler.run()\n"}
+
+Analyze the Base code thoroughly, focusing on whether it provides a solid, consistent foundation for ALL future experimental variations while properly using placeholders for dataset/model-specific components.
+Output:
+{
+    "is_base_code_ready": false,
+    "base_code_issue": "Core logic is largely complete but requirement 1 is not fully satisfied: the foundation never persists model checkpoints (no torch.save / torch.load in any file).  Best_state is kept only in-memory, so there is no implemented saving/loading mechanism.  Everything else (training loop, evaluation, figures, placeholders, 7-file structure, CLI) is correct, but absence of model serialization violates the \"Model saving/loading mechanisms are implemented\" criterion."
+}
