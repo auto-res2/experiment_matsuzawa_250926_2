@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology revolves around approximating the marginal likelihood using the linearized Laplace approximation and enabling its stochastic optimization. The key techniques include: 1. **Parametric Structured Lower Bounds**: Demonstrating (Theorem 1) that existing structured approximations of the Generalized Gauss-Newton (GGN) Hessian (e.g., block-diagonal or diagonal variants like KFAC) are valid lower bounds to the Laplace log marginal likelihood. 2. **Subset-of-Data Kernel Bounds**: Deriving novel lower bounds (Theorem 2) by using the dual NTK form of the log-determinant, which is typically intractable for stochastic gradients. This involves partitioning the input-output index set into subsets, leading to a block-diagonal NTK approximation that permits unbiased stochastic estimates and gradients. 3. **Parametric Data Subset Bounds**: Proving an equivalence (Theorem 3) between the NTK-based subset bound and a parametric variant employing a GGN computed on data subsets. 4. **Parametric Doubly Lower Bound**: Combining the parametric structured bound and the data subset bound (Corollary 3.1) to allow structured parametric approximations (e.g., KFAC) to be used with stochastic optimization on data subsets. The paper also explores strategies for tighter bounds, such as output-wise partitioning (processing single outputs per batch) and grouping inputs by class labels. An interleaved optimization algorithm is used, where network weights and hyperparameters are updated with stochastic gradient steps.
+
+# GitHub URLs List
+['https://github.com/AlexImmer/ntk-marglik']
+Output:
+{
+    "index": 0
+}
