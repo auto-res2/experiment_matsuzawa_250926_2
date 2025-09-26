@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+ProtoDiff leverages a task-guided diffusion model built upon the Prototypical Network for few-shot classification. The methodology involves three key steps: 1) Per-task prototype overfitting: A meta-learner is initially trained and then fine-tuned on individual tasks to obtain task-specific overfitted prototypes (z*), which are considered optimal and serve as ground truth. This involves minimizing cross-entropy loss. 2) Task-guided diffusion: A generative diffusion model is implemented in the prototype space. During meta-training, it learns to reconstruct the overfitted prototype z* from a random noise vector zT, conditioned on the vanilla prototype (~z) computed from the support set, and the time step (t). The diffusion model, zθ(·, ·), is implemented using a transformer (based on GPT-2) that processes prototype tokens and a frequency-encoded time step. The objective function includes a diffusion loss (Ldiff) for predicting the denoised overfitted prototype and a cross-entropy loss (LCE) for query prediction. During meta-test, sampling starts from random Gaussian noise zT and gradually denoises it, conditioned by the vanilla prototype (~z) from the new task's support set, to generate the final diffused prototype z0 for classification. 3) Residual prototype learning: Instead of directly predicting z*, ProtoDiff predicts the residual (z* - ~z). This approach leverages the sparsity of the residual, allows for identity initialization, and significantly accelerates training while enhancing performance.
+
+# GitHub URLs List
+['https://github.com/YDU-uva/ProtoDiff']
+Output:
+{
+    "index": 0
+}
