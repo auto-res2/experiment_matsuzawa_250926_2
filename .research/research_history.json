@@ -524,7 +524,559 @@
         "tieredImageNet",
         "CUB-200-2011 Few-Shot",
         "CIFAR-FS"
-      ]
+      ],
+      "external_resources": {
+        "hugging_face": {
+          "models": [
+            {
+              "id": "aaa12963337/msi-resnet18-pretrain",
+              "author": "aaa12963337",
+              "sha": "5816c340d48a4debd08eaca9950424c36e13703c",
+              "created_at": "2023-12-15T06:52:06+00:00",
+              "last_modified": "2023-12-15T07:21:09+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 19,
+              "likes": 0,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "model.safetensors"
+                },
+                {
+                  "rfilename": "training_args.bin"
+                }
+              ],
+              "card_data": {
+                "license": "apache-2.0",
+                "language": [],
+                "tags": [
+                  "generated_from_trainer"
+                ],
+                "datasets": [
+                  "imagefolder"
+                ],
+                "base_model": "microsoft/resnet-18",
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [
+                  "accuracy"
+                ],
+                "widget": []
+              },
+              "tags": [
+                "transformers",
+                "safetensors",
+                "resnet",
+                "image-classification",
+                "generated_from_trainer",
+                "dataset:imagefolder",
+                "base_model:microsoft/resnet-18",
+                "base_model:finetune:microsoft/resnet-18",
+                "license:apache-2.0",
+                "model-index",
+                "autotrain_compatible",
+                "endpoints_compatible",
+                "region:us"
+              ],
+              "pipeline_tag": "image-classification",
+              "library_name": "transformers",
+              "readme": "---\nlicense: apache-2.0\nbase_model: microsoft/resnet-18\ntags:\n- generated_from_trainer\ndatasets:\n- imagefolder\nmetrics:\n- accuracy\nmodel-index:\n- name: msi-resnet18-pretrain\n  results:\n  - task:\n      name: Image Classification\n      type: image-classification\n    dataset:\n      name: imagefolder\n      type: imagefolder\n      config: default\n      split: validation\n      args: default\n    metrics:\n    - name: Accuracy\n      type: accuracy\n      value: 0.908774373259053\n---\n\n<!-- This model card has been generated automatically according to the information the Trainer had access to. You\nshould probably proofread and complete it, then remove this comment. -->\n\n# msi-resnet18-pretrain\n\nThis model is a fine-tuned version of [microsoft/resnet-18](https://huggingface.co/microsoft/resnet-18) on the imagefolder dataset.\nIt achieves the following results on the evaluation set:\n- Loss: 0.2966\n- Accuracy: 0.9088\n\n## Model description\n\nMore information needed\n\n## Intended uses & limitations\n\nMore information needed\n\n## Training and evaluation data\n\nMore information needed\n\n## Training procedure\n\n### Training hyperparameters\n\nThe following hyperparameters were used during training:\n- learning_rate: 1e-05\n- train_batch_size: 16\n- eval_batch_size: 16\n- seed: 42\n- gradient_accumulation_steps: 4\n- total_train_batch_size: 64\n- optimizer: Adam with betas=(0.9,0.999) and epsilon=1e-08\n- lr_scheduler_type: linear\n- lr_scheduler_warmup_ratio: 0.1\n- num_epochs: 4\n\n### Training results\n\n| Training Loss | Epoch | Step | Validation Loss | Accuracy |\n|:-------------:|:-----:|:----:|:---------------:|:--------:|\n| 0.2719        | 1.0   | 1562 | 0.3501          | 0.8891   |\n| 0.1611        | 2.0   | 3125 | 0.2813          | 0.9118   |\n| 0.166         | 3.0   | 4687 | 0.3161          | 0.8930   |\n| 0.1071        | 4.0   | 6248 | 0.2966          | 0.9088   |\n\n\n### Framework versions\n\n- Transformers 4.35.2\n- Pytorch 2.0.1+cu118\n- Datasets 2.15.0\n- Tokenizers 0.15.0\n",
+              "extracted_code": ""
+            },
+            {
+              "id": "timm/convnext_tiny.in12k_ft_in1k",
+              "author": "timm",
+              "sha": "aa096f03029c7f0ec052013f64c819b34f8ad790",
+              "created_at": "2023-01-11T22:35:26+00:00",
+              "last_modified": "2025-01-21T21:16:24+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 244120,
+              "likes": 3,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "model.safetensors"
+                },
+                {
+                  "rfilename": "pytorch_model.bin"
+                }
+              ],
+              "card_data": {
+                "license": "apache-2.0",
+                "language": [],
+                "library_name": "timm",
+                "tags": [
+                  "image-classification",
+                  "timm",
+                  "transformers"
+                ],
+                "datasets": [
+                  "imagenet-1k",
+                  "imagenet-12k"
+                ],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "timm",
+                "pytorch",
+                "safetensors",
+                "image-classification",
+                "transformers",
+                "dataset:imagenet-1k",
+                "dataset:imagenet-12k",
+                "arxiv:2201.03545",
+                "license:apache-2.0",
+                "region:us"
+              ],
+              "pipeline_tag": "image-classification",
+              "library_name": "timm",
+              "readme": "---\nlicense: apache-2.0\nlibrary_name: timm\ntags:\n- image-classification\n- timm\n- transformers\ndatasets:\n- imagenet-1k\n- imagenet-12k\n---\n# Model card for convnext_tiny.in12k_ft_in1k\n\nA ConvNeXt image classification model. Pretrained in `timm` on ImageNet-12k (a 11821 class subset of full ImageNet-22k) and fine-tuned on ImageNet-1k by Ross Wightman.\n\nImageNet-12k training done on TPUs thanks to support of the [TRC](https://sites.research.google/trc/about/) program.\n\nFine-tuning performed on 8x GPU [Lambda Labs](https://lambdalabs.com/) cloud instances.\n\n\n## Model Details\n- **Model Type:** Image classification / feature backbone\n- **Model Stats:**\n  - Params (M): 28.6\n  - GMACs: 4.5\n  - Activations (M): 13.4\n  - Image size: train = 224 x 224, test = 288 x 288\n- **Papers:**\n  - A ConvNet for the 2020s: https://arxiv.org/abs/2201.03545\n- **Original:** https://github.com/huggingface/pytorch-image-models\n- **Dataset:** ImageNet-1k\n- **Pretrain Dataset:** ImageNet-12k\n\n## Model Usage\n### Image Classification\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model('convnext_tiny.in12k_ft_in1k', pretrained=True)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\ntop5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)\n```\n\n### Feature Map Extraction\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'convnext_tiny.in12k_ft_in1k',\n    pretrained=True,\n    features_only=True,\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\nfor o in output:\n    # print shape of each feature map in output\n    # e.g.:\n    #  torch.Size([1, 96, 56, 56])\n    #  torch.Size([1, 192, 28, 28])\n    #  torch.Size([1, 384, 14, 14])\n    #  torch.Size([1, 768, 7, 7])\n\n    print(o.shape)\n```\n\n### Image Embeddings\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'convnext_tiny.in12k_ft_in1k',\n    pretrained=True,\n    num_classes=0,  # remove classifier nn.Linear\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor\n\n# or equivalently (without needing to set num_classes=0)\n\noutput = model.forward_features(transforms(img).unsqueeze(0))\n# output is unpooled, a (1, 768, 7, 7) shaped tensor\n\noutput = model.forward_head(output, pre_logits=True)\n# output is a (1, num_features) shaped tensor\n```\n\n## Model Comparison\nExplore the dataset and runtime metrics of this model in timm [model results](https://github.com/huggingface/pytorch-image-models/tree/main/results).\n\nAll timing numbers from eager model PyTorch 1.13 on RTX 3090 w/ AMP.\n\n| model                                                                                                                        |top1  |top5  |img_size|param_count|gmacs |macts |samples_per_sec|batch_size|\n|------------------------------------------------------------------------------------------------------------------------------|------|------|--------|-----------|------|------|---------------|----------|\n| [convnextv2_huge.fcmae_ft_in22k_in1k_512](https://huggingface.co/timm/convnextv2_huge.fcmae_ft_in22k_in1k_512)               |88.848|98.742|512     |660.29     |600.81|413.07|28.58          |48        |\n| [convnextv2_huge.fcmae_ft_in22k_in1k_384](https://huggingface.co/timm/convnextv2_huge.fcmae_ft_in22k_in1k_384)               |88.668|98.738|384     |660.29     |337.96|232.35|50.56          |64        |\n| [convnext_xxlarge.clip_laion2b_soup_ft_in1k](https://huggingface.co/timm/convnext_xxlarge.clip_laion2b_soup_ft_in1k)         |88.612|98.704|256     |846.47     |198.09|124.45|122.45         |256       |\n| [convnext_large_mlp.clip_laion2b_soup_ft_in12k_in1k_384](https://huggingface.co/timm/convnext_large_mlp.clip_laion2b_soup_ft_in12k_in1k_384)             |88.312|98.578|384     |200.13     |101.11|126.74|196.84         |256       |\n| [convnextv2_large.fcmae_ft_in22k_in1k_384](https://huggingface.co/timm/convnextv2_large.fcmae_ft_in22k_in1k_384)             |88.196|98.532|384     |197.96     |101.1 |126.74|128.94         |128       |\n| [convnext_large_mlp.clip_laion2b_soup_ft_in12k_in1k_320](https://huggingface.co/timm/convnext_large_mlp.clip_laion2b_soup_ft_in12k_in1k_320)             |87.968|98.47 |320     |200.13     |70.21 |88.02 |283.42         |256       |\n| [convnext_xlarge.fb_in22k_ft_in1k_384](https://huggingface.co/timm/convnext_xlarge.fb_in22k_ft_in1k_384)                     |87.75 |98.556|384     |350.2      |179.2 |168.99|124.85         |192       |\n| [convnextv2_base.fcmae_ft_in22k_in1k_384](https://huggingface.co/timm/convnextv2_base.fcmae_ft_in22k_in1k_384)               |87.646|98.422|384     |88.72      |45.21 |84.49 |209.51         |256       |\n| [convnext_large.fb_in22k_ft_in1k_384](https://huggingface.co/timm/convnext_large.fb_in22k_ft_in1k_384)                       |87.476|98.382|384     |197.77     |101.1 |126.74|194.66         |256       |\n| [convnext_large_mlp.clip_laion2b_augreg_ft_in1k](https://huggingface.co/timm/convnext_large_mlp.clip_laion2b_augreg_ft_in1k) |87.344|98.218|256     |200.13     |44.94 |56.33 |438.08         |256       |\n| [convnextv2_large.fcmae_ft_in22k_in1k](https://huggingface.co/timm/convnextv2_large.fcmae_ft_in22k_in1k)                     |87.26 |98.248|224     |197.96     |34.4  |43.13 |376.84         |256       |\n| [convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384](https://huggingface.co/timm/convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384)                   |87.138|98.212|384     |88.59      |45.21 |84.49 |365.47         |256       |\n| [convnext_xlarge.fb_in22k_ft_in1k](https://huggingface.co/timm/convnext_xlarge.fb_in22k_ft_in1k)                             |87.002|98.208|224     |350.2      |60.98 |57.5  |368.01         |256       |\n| [convnext_base.fb_in22k_ft_in1k_384](https://huggingface.co/timm/convnext_base.fb_in22k_ft_in1k_384)                         |86.796|98.264|384     |88.59      |45.21 |84.49 |366.54         |256       |\n| [convnextv2_base.fcmae_ft_in22k_in1k](https://huggingface.co/timm/convnextv2_base.fcmae_ft_in22k_in1k)                       |86.74 |98.022|224     |88.72      |15.38 |28.75 |624.23         |256       |\n| [convnext_large.fb_in22k_ft_in1k](https://huggingface.co/timm/convnext_large.fb_in22k_ft_in1k)                               |86.636|98.028|224     |197.77     |34.4  |43.13 |581.43         |256       |\n| [convnext_base.clip_laiona_augreg_ft_in1k_384](https://huggingface.co/timm/convnext_base.clip_laiona_augreg_ft_in1k_384)     |86.504|97.97 |384     |88.59      |45.21 |84.49 |368.14         |256       |\n| [convnext_base.clip_laion2b_augreg_ft_in12k_in1k](https://huggingface.co/timm/convnext_base.clip_laion2b_augreg_ft_in12k_in1k)                           |86.344|97.97 |256     |88.59      |20.09 |37.55 |816.14         |256       |\n| [convnextv2_huge.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_huge.fcmae_ft_in1k)                                   |86.256|97.75 |224     |660.29     |115.0 |79.07 |154.72         |256       |\n| [convnext_small.in12k_ft_in1k_384](https://huggingface.co/timm/convnext_small.in12k_ft_in1k_384)                             |86.182|97.92 |384     |50.22      |25.58 |63.37 |516.19         |256       |\n| [convnext_base.clip_laion2b_augreg_ft_in1k](https://huggingface.co/timm/convnext_base.clip_laion2b_augreg_ft_in1k)           |86.154|97.68 |256     |88.59      |20.09 |37.55 |819.86         |256       |\n| [convnext_base.fb_in22k_ft_in1k](https://huggingface.co/timm/convnext_base.fb_in22k_ft_in1k)                                 |85.822|97.866|224     |88.59      |15.38 |28.75 |1037.66        |256       |\n| [convnext_small.fb_in22k_ft_in1k_384](https://huggingface.co/timm/convnext_small.fb_in22k_ft_in1k_384)                       |85.778|97.886|384     |50.22      |25.58 |63.37 |518.95         |256       |\n| [convnextv2_large.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_large.fcmae_ft_in1k)                                 |85.742|97.584|224     |197.96     |34.4  |43.13 |375.23         |256       |\n| [convnext_small.in12k_ft_in1k](https://huggingface.co/timm/convnext_small.in12k_ft_in1k)                                     |85.174|97.506|224     |50.22      |8.71  |21.56 |1474.31        |256       |\n| [convnext_tiny.in12k_ft_in1k_384](https://huggingface.co/timm/convnext_tiny.in12k_ft_in1k_384)                               |85.118|97.608|384     |28.59      |13.14 |39.48 |856.76         |256       |\n| [convnextv2_tiny.fcmae_ft_in22k_in1k_384](https://huggingface.co/timm/convnextv2_tiny.fcmae_ft_in22k_in1k_384)               |85.112|97.63 |384     |28.64      |13.14 |39.48 |491.32         |256       |\n| [convnextv2_base.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_base.fcmae_ft_in1k)                                   |84.874|97.09 |224     |88.72      |15.38 |28.75 |625.33         |256       |\n| [convnext_small.fb_in22k_ft_in1k](https://huggingface.co/timm/convnext_small.fb_in22k_ft_in1k)                               |84.562|97.394|224     |50.22      |8.71  |21.56 |1478.29        |256       |\n| [convnext_large.fb_in1k](https://huggingface.co/timm/convnext_large.fb_in1k)                                                 |84.282|96.892|224     |197.77     |34.4  |43.13 |584.28         |256       |\n| [convnext_tiny.in12k_ft_in1k](https://huggingface.co/timm/convnext_tiny.in12k_ft_in1k)                                       |84.186|97.124|224     |28.59      |4.47  |13.44 |2433.7         |256       |\n| [convnext_tiny.fb_in22k_ft_in1k_384](https://huggingface.co/timm/convnext_tiny.fb_in22k_ft_in1k_384)                         |84.084|97.14 |384     |28.59      |13.14 |39.48 |862.95         |256       |\n| [convnextv2_tiny.fcmae_ft_in22k_in1k](https://huggingface.co/timm/convnextv2_tiny.fcmae_ft_in22k_in1k)                       |83.894|96.964|224     |28.64      |4.47  |13.44 |1452.72        |256       |\n| [convnext_base.fb_in1k](https://huggingface.co/timm/convnext_base.fb_in1k)                                                   |83.82 |96.746|224     |88.59      |15.38 |28.75 |1054.0         |256       |\n| [convnextv2_nano.fcmae_ft_in22k_in1k_384](https://huggingface.co/timm/convnextv2_nano.fcmae_ft_in22k_in1k_384)               |83.37 |96.742|384     |15.62      |7.22  |24.61 |801.72         |256       |\n| [convnext_small.fb_in1k](https://huggingface.co/timm/convnext_small.fb_in1k)                                                 |83.142|96.434|224     |50.22      |8.71  |21.56 |1464.0         |256       |\n| [convnextv2_tiny.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_tiny.fcmae_ft_in1k)                                   |82.92 |96.284|224     |28.64      |4.47  |13.44 |1425.62        |256       |\n| [convnext_tiny.fb_in22k_ft_in1k](https://huggingface.co/timm/convnext_tiny.fb_in22k_ft_in1k)                                 |82.898|96.616|224     |28.59      |4.47  |13.44 |2480.88        |256       |\n| [convnext_nano.in12k_ft_in1k](https://huggingface.co/timm/convnext_nano.in12k_ft_in1k)                                       |82.282|96.344|224     |15.59      |2.46  |8.37  |3926.52        |256       |\n| [convnext_tiny_hnf.a2h_in1k](https://huggingface.co/timm/convnext_tiny_hnf.a2h_in1k)                                         |82.216|95.852|224     |28.59      |4.47  |13.44 |2529.75        |256       |\n| [convnext_tiny.fb_in1k](https://huggingface.co/timm/convnext_tiny.fb_in1k)                                                   |82.066|95.854|224     |28.59      |4.47  |13.44 |2346.26        |256       |\n| [convnextv2_nano.fcmae_ft_in22k_in1k](https://huggingface.co/timm/convnextv2_nano.fcmae_ft_in22k_in1k)                       |82.03 |96.166|224     |15.62      |2.46  |8.37  |2300.18        |256       |\n| [convnextv2_nano.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_nano.fcmae_ft_in1k)                                   |81.83 |95.738|224     |15.62      |2.46  |8.37  |2321.48        |256       |\n| [convnext_nano_ols.d1h_in1k](https://huggingface.co/timm/convnext_nano_ols.d1h_in1k)                                         |80.866|95.246|224     |15.65      |2.65  |9.38  |3523.85        |256       |\n| [convnext_nano.d1h_in1k](https://huggingface.co/timm/convnext_nano.d1h_in1k)                                                 |80.768|95.334|224     |15.59      |2.46  |8.37  |3915.58        |256       |\n| [convnextv2_pico.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_pico.fcmae_ft_in1k)                                   |80.304|95.072|224     |9.07       |1.37  |6.1   |3274.57        |256       |\n| [convnext_pico.d1_in1k](https://huggingface.co/timm/convnext_pico.d1_in1k)                                                   |79.526|94.558|224     |9.05       |1.37  |6.1   |5686.88        |256       |\n| [convnext_pico_ols.d1_in1k](https://huggingface.co/timm/convnext_pico_ols.d1_in1k)                                           |79.522|94.692|224     |9.06       |1.43  |6.5   |5422.46        |256       |\n| [convnextv2_femto.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_femto.fcmae_ft_in1k)                                 |78.488|93.98 |224     |5.23       |0.79  |4.57  |4264.2         |256       |\n| [convnext_femto_ols.d1_in1k](https://huggingface.co/timm/convnext_femto_ols.d1_in1k)                                         |77.86 |93.83 |224     |5.23       |0.82  |4.87  |6910.6         |256       |\n| [convnext_femto.d1_in1k](https://huggingface.co/timm/convnext_femto.d1_in1k)                                                 |77.454|93.68 |224     |5.22       |0.79  |4.57  |7189.92        |256       |\n| [convnextv2_atto.fcmae_ft_in1k](https://huggingface.co/timm/convnextv2_atto.fcmae_ft_in1k)                                   |76.664|93.044|224     |3.71       |0.55  |3.81  |4728.91        |256       |\n| [convnext_atto_ols.a2_in1k](https://huggingface.co/timm/convnext_atto_ols.a2_in1k)                                           |75.88 |92.846|224     |3.7        |0.58  |4.11  |7963.16        |256       |\n| [convnext_atto.d2_in1k](https://huggingface.co/timm/convnext_atto.d2_in1k)                                                   |75.664|92.9  |224     |3.7        |0.55  |3.81  |8439.22        |256       |\n\n## Citation\n```bibtex\n@misc{rw2019timm,\n  author = {Ross Wightman},\n  title = {PyTorch Image Models},\n  year = {2019},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  doi = {10.5281/zenodo.4414861},\n  howpublished = {\\url{https://github.com/huggingface/pytorch-image-models}}\n}\n```\n```bibtex\n@article{liu2022convnet,\n  author  = {Zhuang Liu and Hanzi Mao and Chao-Yuan Wu and Christoph Feichtenhofer and Trevor Darrell and Saining Xie},\n  title   = {A ConvNet for the 2020s},\n  journal = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},\n  year    = {2022},\n}\n```\n",
+              "extracted_code": "from urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model('convnext_tiny.in12k_ft_in1k', pretrained=True)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\ntop5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)\n\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'convnext_tiny.in12k_ft_in1k',\n    pretrained=True,\n    features_only=True,\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\nfor o in output:\n    # print shape of each feature map in output\n    # e.g.:\n    #  torch.Size([1, 96, 56, 56])\n    #  torch.Size([1, 192, 28, 28])\n    #  torch.Size([1, 384, 14, 14])\n    #  torch.Size([1, 768, 7, 7])\n\n    print(o.shape)\n\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'convnext_tiny.in12k_ft_in1k',\n    pretrained=True,\n    num_classes=0,  # remove classifier nn.Linear\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor\n\n# or equivalently (without needing to set num_classes=0)\n\noutput = model.forward_features(transforms(img).unsqueeze(0))\n# output is unpooled, a (1, 768, 7, 7) shaped tensor\n\noutput = model.forward_head(output, pre_logits=True)\n# output is a (1, num_features) shaped tensor"
+            },
+            {
+              "id": "facebook/convnext-tiny-224",
+              "author": "facebook",
+              "sha": "6166b7613034066690a621d8bf25ffdf181a34f0",
+              "created_at": "2022-03-02T23:29:05+00:00",
+              "last_modified": "2023-06-13T19:40:31+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 35288,
+              "likes": 21,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "preprocessor_config.json"
+                },
+                {
+                  "rfilename": "pytorch_model.bin"
+                },
+                {
+                  "rfilename": "tf_model.h5"
+                }
+              ],
+              "card_data": {
+                "license": "apache-2.0",
+                "language": [],
+                "tags": [
+                  "vision",
+                  "image-classification"
+                ],
+                "datasets": [
+                  "imagenet-1k"
+                ],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": [
+                  {
+                    "src": "https://huggingface.co/datasets/mishig/sample_images/resolve/main/tiger.jpg",
+                    "example_title": "Tiger"
+                  },
+                  {
+                    "src": "https://huggingface.co/datasets/mishig/sample_images/resolve/main/teapot.jpg",
+                    "example_title": "Teapot"
+                  },
+                  {
+                    "src": "https://huggingface.co/datasets/mishig/sample_images/resolve/main/palace.jpg",
+                    "example_title": "Palace"
+                  }
+                ]
+              },
+              "tags": [
+                "transformers",
+                "pytorch",
+                "tf",
+                "convnext",
+                "image-classification",
+                "vision",
+                "dataset:imagenet-1k",
+                "arxiv:2201.03545",
+                "license:apache-2.0",
+                "autotrain_compatible",
+                "endpoints_compatible",
+                "region:us"
+              ],
+              "pipeline_tag": "image-classification",
+              "library_name": "transformers",
+              "readme": "---\nlicense: apache-2.0\ntags:\n- vision\n- image-classification\ndatasets:\n- imagenet-1k\nwidget:\n- src: https://huggingface.co/datasets/mishig/sample_images/resolve/main/tiger.jpg\n  example_title: Tiger\n- src: https://huggingface.co/datasets/mishig/sample_images/resolve/main/teapot.jpg\n  example_title: Teapot\n- src: https://huggingface.co/datasets/mishig/sample_images/resolve/main/palace.jpg\n  example_title: Palace\n---\n\n# ConvNeXT (tiny-sized model) \n\nConvNeXT model trained on ImageNet-1k at resolution 224x224. It was introduced in the paper [A ConvNet for the 2020s](https://arxiv.org/abs/2201.03545) by Liu et al. and first released in [this repository](https://github.com/facebookresearch/ConvNeXt). \n\nDisclaimer: The team releasing ConvNeXT did not write a model card for this model so this model card has been written by the Hugging Face team.\n\n## Model description\n\nConvNeXT is a pure convolutional model (ConvNet), inspired by the design of Vision Transformers, that claims to outperform them. The authors started from a ResNet and \"modernized\" its design by taking the Swin Transformer as inspiration.\n\n![model image](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/convnext_architecture.png)\n\n## Intended uses & limitations\n\nYou can use the raw model for image classification. See the [model hub](https://huggingface.co/models?search=convnext) to look for\nfine-tuned versions on a task that interests you.\n\n### How to use\n\nHere is how to use this model to classify an image of the COCO 2017 dataset into one of the 1,000 ImageNet classes:\n\n```python\nfrom transformers import ConvNextImageProcessor, ConvNextForImageClassification\nimport torch\nfrom datasets import load_dataset\n\ndataset = load_dataset(\"huggingface/cats-image\")\nimage = dataset[\"test\"][\"image\"][0]\n\nprocessor = ConvNextImageProcessor.from_pretrained(\"facebook/convnext-tiny-224\")\nmodel = ConvNextForImageClassification.from_pretrained(\"facebook/convnext-tiny-224\")\n\ninputs = processor(image, return_tensors=\"pt\")\n\nwith torch.no_grad():\n    logits = model(**inputs).logits\n\n# model predicts one of the 1000 ImageNet classes\npredicted_label = logits.argmax(-1).item()\nprint(model.config.id2label[predicted_label]),\n```\n\nFor more code examples, we refer to the [documentation](https://huggingface.co/docs/transformers/master/en/model_doc/convnext).\n\n### BibTeX entry and citation info\n\n```bibtex\n@article{DBLP:journals/corr/abs-2201-03545,\n  author    = {Zhuang Liu and\n               Hanzi Mao and\n               Chao{-}Yuan Wu and\n               Christoph Feichtenhofer and\n               Trevor Darrell and\n               Saining Xie},\n  title     = {A ConvNet for the 2020s},\n  journal   = {CoRR},\n  volume    = {abs/2201.03545},\n  year      = {2022},\n  url       = {https://arxiv.org/abs/2201.03545},\n  eprinttype = {arXiv},\n  eprint    = {2201.03545},\n  timestamp = {Thu, 20 Jan 2022 14:21:35 +0100},\n  biburl    = {https://dblp.org/rec/journals/corr/abs-2201-03545.bib},\n  bibsource = {dblp computer science bibliography, https://dblp.org}\n}\n```",
+              "extracted_code": "from transformers import ConvNextImageProcessor, ConvNextForImageClassification\nimport torch\nfrom datasets import load_dataset\n\ndataset = load_dataset(\"huggingface/cats-image\")\nimage = dataset[\"test\"][\"image\"][0]\n\nprocessor = ConvNextImageProcessor.from_pretrained(\"facebook/convnext-tiny-224\")\nmodel = ConvNextForImageClassification.from_pretrained(\"facebook/convnext-tiny-224\")\n\ninputs = processor(image, return_tensors=\"pt\")\n\nwith torch.no_grad():\n    logits = model(**inputs).logits\n\n# model predicts one of the 1000 ImageNet classes\npredicted_label = logits.argmax(-1).item()\nprint(model.config.id2label[predicted_label]),"
+            },
+            {
+              "id": "facebook/convnextv2-tiny-1k-224",
+              "author": "facebook",
+              "sha": "f4db009e63145e02b3c075aa64d90ce41bcca4b1",
+              "created_at": "2023-02-17T14:03:53+00:00",
+              "last_modified": "2025-02-17T18:40:39+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 11706,
+              "likes": 6,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "model.safetensors"
+                },
+                {
+                  "rfilename": "preprocessor_config.json"
+                },
+                {
+                  "rfilename": "pytorch_model.bin"
+                },
+                {
+                  "rfilename": "tf_model.h5"
+                }
+              ],
+              "card_data": {
+                "license": "apache-2.0",
+                "language": [],
+                "tags": [
+                  "vision",
+                  "image-classification"
+                ],
+                "datasets": [
+                  "imagenet-1k"
+                ],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": [
+                  {
+                    "src": "https://huggingface.co/datasets/mishig/sample_images/resolve/main/tiger.jpg",
+                    "example_title": "Tiger"
+                  },
+                  {
+                    "src": "https://huggingface.co/datasets/mishig/sample_images/resolve/main/teapot.jpg",
+                    "example_title": "Teapot"
+                  },
+                  {
+                    "src": "https://huggingface.co/datasets/mishig/sample_images/resolve/main/palace.jpg",
+                    "example_title": "Palace"
+                  }
+                ]
+              },
+              "tags": [
+                "transformers",
+                "pytorch",
+                "tf",
+                "safetensors",
+                "convnextv2",
+                "image-classification",
+                "vision",
+                "dataset:imagenet-1k",
+                "arxiv:2301.00808",
+                "license:apache-2.0",
+                "autotrain_compatible",
+                "endpoints_compatible",
+                "region:us"
+              ],
+              "pipeline_tag": "image-classification",
+              "library_name": "transformers",
+              "readme": "---\nlicense: apache-2.0\ntags:\n- vision\n- image-classification\ndatasets:\n- imagenet-1k\nwidget:\n- src: https://huggingface.co/datasets/mishig/sample_images/resolve/main/tiger.jpg\n  example_title: Tiger\n- src: https://huggingface.co/datasets/mishig/sample_images/resolve/main/teapot.jpg\n  example_title: Teapot\n- src: https://huggingface.co/datasets/mishig/sample_images/resolve/main/palace.jpg\n  example_title: Palace\n---\n\n# ConvNeXt V2 (tiny-sized model) \n\nConvNeXt V2 model pretrained using the FCMAE framework and fine-tuned on the ImageNet-1K dataset at resolution 224x224. It was introduced in the paper [ConvNeXt V2: Co-designing and Scaling ConvNets with Masked Autoencoders](https://arxiv.org/abs/2301.00808) by Woo et al. and first released in [this repository](https://github.com/facebookresearch/ConvNeXt-V2). \n\nDisclaimer: The team releasing ConvNeXT V2 did not write a model card for this model so this model card has been written by the Hugging Face team.\n\n## Model description\n\nConvNeXt V2 is a pure convolutional model (ConvNet) that introduces a fully convolutional masked autoencoder framework (FCMAE) and a new Global Response Normalization (GRN) layer to ConvNeXt. ConvNeXt V2 significantly improves the performance of pure ConvNets on various recognition benchmarks.\n\n![model image](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/convnextv2_architecture.png)\n\n## Intended uses & limitations\n\nYou can use the raw model for image classification. See the [model hub](https://huggingface.co/models?search=convnextv2) to look for\nfine-tuned versions on a task that interests you.\n\n### How to use\n\nHere is how to use this model to classify an image of the COCO 2017 dataset into one of the 1,000 ImageNet classes:\n\n```python\nfrom transformers import AutoImageProcessor, ConvNextV2ForImageClassification\nimport torch\nfrom datasets import load_dataset\n\ndataset = load_dataset(\"huggingface/cats-image\")\nimage = dataset[\"test\"][\"image\"][0]\n\npreprocessor = AutoImageProcessor.from_pretrained(\"facebook/convnextv2-tiny-1k-224\")\nmodel = ConvNextV2ForImageClassification.from_pretrained(\"facebook/convnextv2-tiny-1k-224\")\n\ninputs = preprocessor(image, return_tensors=\"pt\")\n\nwith torch.no_grad():\n    logits = model(**inputs).logits\n\n# model predicts one of the 1000 ImageNet classes\npredicted_label = logits.argmax(-1).item()\nprint(model.config.id2label[predicted_label]),\n```\n\nFor more code examples, we refer to the [documentation](https://huggingface.co/docs/transformers/master/en/model_doc/convnextv2).\n\n### BibTeX entry and citation info\n\n```bibtex\n@article{DBLP:journals/corr/abs-2301-00808,\n  author    = {Sanghyun Woo and\n               Shoubhik Debnath and\n               Ronghang Hu and\n               Xinlei Chen and\n               Zhuang Liu and\n               In So Kweon and\n               Saining Xie},\n  title     = {ConvNeXt {V2:} Co-designing and Scaling ConvNets with Masked Autoencoders},\n  journal   = {CoRR},\n  volume    = {abs/2301.00808},\n  year      = {2023},\n  url       = {https://doi.org/10.48550/arXiv.2301.00808},\n  doi       = {10.48550/arXiv.2301.00808},\n  eprinttype = {arXiv},\n  eprint    = {2301.00808},\n  timestamp = {Tue, 10 Jan 2023 15:10:12 +0100},\n  biburl    = {https://dblp.org/rec/journals/corr/abs-2301-00808.bib},\n  bibsource = {dblp computer science bibliography, https://dblp.org}\n}\n```",
+              "extracted_code": "from transformers import AutoImageProcessor, ConvNextV2ForImageClassification\nimport torch\nfrom datasets import load_dataset\n\ndataset = load_dataset(\"huggingface/cats-image\")\nimage = dataset[\"test\"][\"image\"][0]\n\npreprocessor = AutoImageProcessor.from_pretrained(\"facebook/convnextv2-tiny-1k-224\")\nmodel = ConvNextV2ForImageClassification.from_pretrained(\"facebook/convnextv2-tiny-1k-224\")\n\ninputs = preprocessor(image, return_tensors=\"pt\")\n\nwith torch.no_grad():\n    logits = model(**inputs).logits\n\n# model predicts one of the 1000 ImageNet classes\npredicted_label = logits.argmax(-1).item()\nprint(model.config.id2label[predicted_label]),"
+            }
+          ],
+          "datasets": [
+            {
+              "id": "timm/mini-imagenet",
+              "author": "timm",
+              "sha": "bd8779f9d33c061ea6e75fdd3bce4e43dd679060",
+              "created_at": "2024-11-20T22:17:09+00:00",
+              "last_modified": "2024-11-20T22:44:47+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 3703,
+              "likes": 13,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data/test-00000-of-00002.parquet"
+                },
+                {
+                  "rfilename": "data/test-00001-of-00002.parquet"
+                },
+                {
+                  "rfilename": "data/train-00000-of-00013.parquet"
+                },
+                {
+                  "rfilename": "data/train-00001-of-00013.parquet"
+                },
+                {
+                  "rfilename": "data/train-00002-of-00013.parquet"
+                },
+                {
+                  "rfilename": "data/train-00003-of-00013.parquet"
+                },
+                {
+                  "rfilename": "data/train-00004-of-00013.parquet"
+                },
+                {
+                  "rfilename": "data/train-00005-of-00013.parquet"
+                }
+              ],
+              "card_data": {
+                "license": "other",
+                "language": [],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [
+                  "image-classification"
+                ],
+                "size_categories": [
+                  "10K<n<100K"
+                ],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:image-classification",
+                "license:other",
+                "size_categories:10K<n<100K",
+                "format:parquet",
+                "modality:image",
+                "library:datasets",
+                "library:dask",
+                "library:mlcroissant",
+                "library:polars",
+                "arxiv:1606.04080",
+                "region:us"
+              ],
+              "readme": "---\ndataset_info:\n  features:\n  - name: image\n    dtype: image\n  - name: label\n    dtype:\n      class_label:\n        names:\n          '0': n01532829\n          '1': n01558993\n          '2': n01704323\n          '3': n01749939\n          '4': n01770081\n          '5': n01843383\n          '6': n01855672\n          '7': n01910747\n          '8': n01930112\n          '9': n01981276\n          '10': n02074367\n          '11': n02089867\n          '12': n02091244\n          '13': n02091831\n          '14': n02099601\n          '15': n02101006\n          '16': n02105505\n          '17': n02108089\n          '18': n02108551\n          '19': n02108915\n          '20': n02110063\n          '21': n02110341\n          '22': n02111277\n          '23': n02113712\n          '24': n02114548\n          '25': n02116738\n          '26': n02120079\n          '27': n02129165\n          '28': n02138441\n          '29': n02165456\n          '30': n02174001\n          '31': n02219486\n          '32': n02443484\n          '33': n02457408\n          '34': n02606052\n          '35': n02687172\n          '36': n02747177\n          '37': n02795169\n          '38': n02823428\n          '39': n02871525\n          '40': n02950826\n          '41': n02966193\n          '42': n02971356\n          '43': n02981792\n          '44': n03017168\n          '45': n03047690\n          '46': n03062245\n          '47': n03075370\n          '48': n03127925\n          '49': n03146219\n          '50': n03207743\n          '51': n03220513\n          '52': n03272010\n          '53': n03337140\n          '54': n03347037\n          '55': n03400231\n          '56': n03417042\n          '57': n03476684\n          '58': n03527444\n          '59': n03535780\n          '60': n03544143\n          '61': n03584254\n          '62': n03676483\n          '63': n03770439\n          '64': n03773504\n          '65': n03775546\n          '66': n03838899\n          '67': n03854065\n          '68': n03888605\n          '69': n03908618\n          '70': n03924679\n          '71': n03980874\n          '72': n03998194\n          '73': n04067472\n          '74': n04146614\n          '75': n04149813\n          '76': n04243546\n          '77': n04251144\n          '78': n04258138\n          '79': n04275548\n          '80': n04296562\n          '81': n04389033\n          '82': n04418357\n          '83': n04435653\n          '84': n04443257\n          '85': n04509417\n          '86': n04515003\n          '87': n04522168\n          '88': n04596742\n          '89': n04604644\n          '90': n04612504\n          '91': n06794110\n          '92': n07584110\n          '93': n07613480\n          '94': n07697537\n          '95': n07747607\n          '96': n09246464\n          '97': n09256479\n          '98': n13054560\n          '99': n13133613\n  splits:\n  - name: train\n    num_bytes: 6284840508\n    num_examples: 50000\n  - name: validation\n    num_bytes: 1286953696\n    num_examples: 10000\n  - name: test\n    num_bytes: 670707560\n    num_examples: 5000\n  download_size: 7433461683\n  dataset_size: 8242501764\nconfigs:\n- config_name: default\n  data_files:\n  - split: train\n    path: data/train-*\n  - split: validation\n    path: data/validation-*\n  - split: test\n    path: data/test-*\nlicense: other\nlicense_name: imagenet\nlicense_link: https://www.image-net.org/download.php\ntask_categories:\n- image-classification\npretty_name: Mini-ImageNet\nsize_categories:\n- 10K<n<100K\n---\n\n## Dataset Description\n\nA mini version of ImageNet-1k with 100 of 1000 classes present.\n\nUnlike some 'mini' variants this one includes the original images at their original sizes. Many such subsets downsample to 84x84 or other smaller resolutions.\n\n### Data Splits\n\n#### Train\n* 50000 samples from ImageNet-1k train split\n\n#### Validation\n* 10000 samples from ImageNet-1k train split\n\n#### Test\n* 5000 samples from ImageNet-1k validation split (all 50 samples per class)\n\n### Usage\n\nThis dataset is good for testing hparams and models in `timm`\n\n#### Train\n\n`python train.py --dataset hfds/timm/mini-imagenet --model resnet50 --amp --num-classes 100`\n\n### Citation Information\n\nFor the specific instance of this mini variant I am not sure what the origin is. It is different from commonly referenced [Vinyales et al.,2016](https://arxiv.org/abs/1606.04080) as it doesn't match the classes / splits.\n\nTrain & validation splits match train & test of https://www.kaggle.com/datasets/ctrnngtrung/miniimagenet ... it is not clear where that originated though.\n\nOriginal ImageNet citation:\n```bibtex\n@article{imagenet15russakovsky,\n    Author = {Olga Russakovsky and Jia Deng and Hao Su and Jonathan Krause and Sanjeev Satheesh and Sean Ma and Zhiheng Huang and Andrej Karpathy and Aditya Khosla and Michael Bernstein and Alexander C. Berg and Li Fei-Fei},\n    Title = { {ImageNet Large Scale Visual Recognition Challenge} },\n    Year = {2015},\n    journal   = {International Journal of Computer Vision (IJCV)},\n    doi = {10.1007/s11263-015-0816-y},\n    volume={115},\n    number={3},\n    pages={211-252}\n}\n```",
+              "extracted_code": ""
+            },
+            {
+              "id": "GATE-engine/mini_imagenet",
+              "author": "GATE-engine",
+              "sha": "f4fd85af7140e29002fdf9c121e38cc0bb7b3a1a",
+              "created_at": "2023-06-05T10:59:59+00:00",
+              "last_modified": "2023-12-02T22:44:53+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 1320,
+              "likes": 8,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data/test-00000-of-00002-a07875a8dd83cc9a.parquet"
+                },
+                {
+                  "rfilename": "data/test-00001-of-00002-5ef02806b1ca244c.parquet"
+                },
+                {
+                  "rfilename": "data/train-00000-of-00006-c7140eef5412dc9b.parquet"
+                },
+                {
+                  "rfilename": "data/train-00001-of-00006-cca25eb9a700a98a.parquet"
+                },
+                {
+                  "rfilename": "data/train-00002-of-00006-361ce01fe69ee584.parquet"
+                },
+                {
+                  "rfilename": "data/train-00003-of-00006-0d3c2a1a8099d74e.parquet"
+                },
+                {
+                  "rfilename": "data/train-00004-of-00006-cc1185f5721ab207.parquet"
+                },
+                {
+                  "rfilename": "data/train-00005-of-00006-b275fae4d289bd66.parquet"
+                }
+              ],
+              "card_data": {
+                "language": [],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [
+                  "image-classification"
+                ],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:image-classification",
+                "size_categories:10K<n<100K",
+                "format:parquet",
+                "modality:image",
+                "library:datasets",
+                "library:dask",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\ndataset_info:\n  features:\n  - name: image\n    dtype: image\n  - name: label\n    dtype: int64\n  splits:\n  - name: train\n    num_bytes: 2533332667\n    num_examples: 38400\n  - name: validation\n    num_bytes: 623452894\n    num_examples: 9600\n  - name: test\n    num_bytes: 781497663\n    num_examples: 12000\n  download_size: 3938112512\n  dataset_size: 3938283224\ntask_categories:\n- image-classification\npretty_name: mini-imagenet\n---\n# Dataset Card for \"mini_imagenet\"\n\n[More Information needed](https://github.com/huggingface/datasets/blob/main/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)",
+              "extracted_code": ""
+            },
+            {
+              "id": "dnth/mini-imagenet",
+              "author": "dnth",
+              "sha": "870b77a37d9c35471c99ee22cc55b823029889b5",
+              "created_at": "2024-11-27T03:35:12+00:00",
+              "last_modified": "2024-11-27T04:31:13+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 97,
+              "likes": 0,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data/all-00000-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00001-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00002-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00003-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00004-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00005-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00006-of-00015.parquet"
+                },
+                {
+                  "rfilename": "data/all-00007-of-00015.parquet"
+                }
+              ],
+              "card_data": {
+                "language": [],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "size_categories:10K<n<100K",
+                "format:parquet",
+                "modality:image",
+                "library:datasets",
+                "library:dask",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\ndataset_info:\n  features:\n  - name: image\n    dtype: image\n  - name: label\n    dtype:\n      class_label:\n        names:\n          '0': house finch, linnet, Carpodacus mexicanus\n          '1': robin, American robin, Turdus migratorius\n          '2': triceratops\n          '3': green mamba\n          '4': harvestman, daddy longlegs, Phalangium opilio\n          '5': toucan\n          '6': goose\n          '7': jellyfish\n          '8': nematode, nematode worm, roundworm\n          '9': king crab, Alaska crab, Alaskan king crab, Alaska king crab, Paralithodes\n            camtschatica\n          '10': dugong, Dugong dugon\n          '11': Walker hound, Walker foxhound\n          '12': Ibizan hound, Ibizan Podenco\n          '13': Saluki, gazelle hound\n          '14': golden retriever\n          '15': Gordon setter\n          '16': komondor\n          '17': boxer\n          '18': Tibetan mastiff\n          '19': French bulldog\n          '20': malamute, malemute, Alaskan malamute\n          '21': dalmatian, coach dog, carriage dog\n          '22': Newfoundland, Newfoundland dog\n          '23': miniature poodle\n          '24': white wolf, Arctic wolf, Canis lupus tundrarum\n          '25': African hunting dog, hyena dog, Cape hunting dog, Lycaon pictus\n          '26': Arctic fox, white fox, Alopex lagopus\n          '27': lion, king of beasts, Panthera leo\n          '28': meerkat, mierkat\n          '29': ladybug, ladybeetle, lady beetle, ladybird, ladybird beetle\n          '30': rhinoceros beetle\n          '31': ant, emmet, pismire\n          '32': black-footed ferret, ferret, Mustela nigripes\n          '33': three-toed sloth, ai, Bradypus tridactylus\n          '34': rock beauty, Holocanthus tricolor\n          '35': aircraft carrier, carrier, flattop, attack aircraft carrier\n          '36': ashcan, trash can, garbage can, wastebin, ash bin, ash-bin, ashbin,\n            dustbin, trash barrel, trash bin\n          '37': barrel, cask\n          '38': beer bottle\n          '39': bookshop, bookstore, bookstall\n          '40': cannon\n          '41': carousel, carrousel, merry-go-round, roundabout, whirligig\n          '42': carton\n          '43': catamaran\n          '44': chime, bell, gong\n          '45': clog, geta, patten, sabot\n          '46': cocktail shaker\n          '47': combination lock\n          '48': crate\n          '49': cuirass\n          '50': dishrag, dishcloth\n          '51': dome\n          '52': electric guitar\n          '53': file, file cabinet, filing cabinet\n          '54': fire screen, fireguard\n          '55': frying pan, frypan, skillet\n          '56': garbage truck, dustcart\n          '57': hair slide\n          '58': holster\n          '59': horizontal bar, high bar\n          '60': hourglass\n          '61': iPod\n          '62': lipstick, lip rouge\n          '63': miniskirt, mini\n          '64': missile\n          '65': mixing bowl\n          '66': oboe, hautboy, hautbois\n          '67': organ, pipe organ\n          '68': parallel bars, bars\n          '69': pencil box, pencil case\n          '70': photocopier\n          '71': poncho\n          '72': prayer rug, prayer mat\n          '73': reel\n          '74': school bus\n          '75': scoreboard\n          '76': slot, one-armed bandit\n          '77': snorkel\n          '78': solar dish, solar collector, solar furnace\n          '79': spider web, spider's web\n          '80': stage\n          '81': tank, army tank, armored combat vehicle, armoured combat vehicle\n          '82': theater curtain, theatre curtain\n          '83': tile roof\n          '84': tobacco shop, tobacconist shop, tobacconist\n          '85': unicycle, monocycle\n          '86': upright, upright piano\n          '87': vase\n          '88': wok\n          '89': worm fence, snake fence, snake-rail fence, Virginia fence\n          '90': yawl\n          '91': street sign\n          '92': consomme\n          '93': trifle\n          '94': hotdog, hot dog, red hot\n          '95': orange\n          '96': cliff, drop, drop-off\n          '97': coral reef\n          '98': bolete\n          '99': ear, spike, capitulum\n  splits:\n  - name: train\n    num_bytes: 5661216817.0\n    num_examples: 50000\n  - name: validation\n    num_bytes: 1127476741.0\n    num_examples: 10000\n  - name: test\n    num_bytes: 663008304.0\n    num_examples: 5000\n  download_size: 7433313256\n  dataset_size: 7451701862.0\nconfigs:\n- config_name: default\n  data_files:\n  - split: train\n    path: data/train-*\n  - split: validation\n    path: data/validation-*\n  - split: test\n    path: data/test-*\n---\n",
+              "extracted_code": ""
+            },
+            {
+              "id": "GATE-engine/cifarfs",
+              "author": "GATE-engine",
+              "sha": "a804c12cc85675b0a21d85a664c578f902b915ef",
+              "created_at": "2023-06-05T17:32:39+00:00",
+              "last_modified": "2023-06-05T17:32:51+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 159,
+              "likes": 0,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data/test-00000-of-00001-6e06f87d92fce065.parquet"
+                },
+                {
+                  "rfilename": "data/train-00000-of-00001-b2e0d12edcc41ca1.parquet"
+                },
+                {
+                  "rfilename": "data/validation-00000-of-00001-e04b38bd7284925d.parquet"
+                }
+              ],
+              "card_data": {
+                "language": [],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "size_categories:10K<n<100K",
+                "format:parquet",
+                "modality:image",
+                "library:datasets",
+                "library:pandas",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\ndataset_info:\n  features:\n  - name: image\n    dtype: image\n  - name: label\n    dtype: int64\n  splits:\n  - name: train\n    num_bytes: 86489157.0\n    num_examples: 38400\n  - name: validation\n    num_bytes: 21539635.0\n    num_examples: 9600\n  - name: test\n    num_bytes: 26600575.0\n    num_examples: 12000\n  download_size: 134961942\n  dataset_size: 134629367.0\n---\n# Dataset Card for \"cifarfs\"\n\n[More Information needed](https://github.com/huggingface/datasets/blob/main/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)",
+              "extracted_code": ""
+            }
+          ]
+        }
+      }
     }
   },
   "idea_info_history": [
