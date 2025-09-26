@@ -169,12 +169,17 @@ def episode_loss(
     # ------------------ standard proto loss ------------------
     protos = []
     for c in range(way):
-        protos.append(emb_sup[lbl_sup == c].mean(0))
+        class_embeddings = emb_sup[lbl_sup == c]
+        if class_embeddings.size(0) == 0:
+            # Handle edge case where no support samples for class c
+            protos.append(torch.zeros_like(emb_sup[0]))
+        else:
+            protos.append(class_embeddings.mean(0))
     protos = torch.stack(protos, dim=0)
-    protos = F.normalize(protos, dim=1)
+    protos = F.normalize(protos, dim=1, eps=1e-8)
 
     logits = (
-        F.normalize(emb_q, dim=1) @ protos.t() * temperature
+        F.normalize(emb_q, dim=1, eps=1e-8) @ protos.t() * temperature
     )  # [n_query, way]
     L_proto = F.cross_entropy(logits, lbl_q)
 
@@ -212,6 +217,11 @@ def _step(
     imgs, labels = episode
     imgs = imgs.to(device)
     labels = labels.to(device)
+    # Reshape if batch_size > 1: [batch_size, episode_size, C, H, W] -> [batch_size*episode_size, C, H, W]
+    if imgs.dim() == 5:
+        batch_size, episode_size = imgs.shape[:2]
+        imgs = imgs.view(batch_size * episode_size, *imgs.shape[2:])
+        labels = labels.view(batch_size * episode_size)
     embeddings = model(imgs)
 
     loss, _ = episode_loss(

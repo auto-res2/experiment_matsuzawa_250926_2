@@ -9,15 +9,16 @@ description = "PMR-Proto experiments with miniImageNet and real backbones"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 
-[project.dependencies]
-torch = ">=2.0"
-torchvision = ">=0.15"
-pyyaml = "*"
-numpy = "*"
-matplotlib = "*"
-seaborn = "*"
-scikit-learn = "*"
-scipy = "*"
-tqdm = "*"
-datasets = "*"            # <-- new: Hugging Face datasets loader
-timm = "*"                # <-- new: for ConvNeXt backbone
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "pyyaml",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+    "scipy",
+    "tqdm",
+    "datasets",
+    "timm"
+]

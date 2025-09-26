@@ -39,7 +39,7 @@ training:
   batch_size: 1               # 1 episode / batch (each episode already large)
   lr: 0.05
   lr_scheduler: cosine
-  weight_decay: 5e-4
+  weight_decay: 0.0005
   checkpoint_dir: checkpoints
   seed: 12
   device: cuda

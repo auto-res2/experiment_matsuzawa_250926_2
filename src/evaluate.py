@@ -140,6 +140,11 @@ def evaluate(
         for imgs, labels in tqdm(loader, desc="Evaluation"):
             imgs = imgs.to(device)
             labels = labels.to(device)
+            # Reshape if batch_size > 1: [batch_size, episode_size, C, H, W] -> [batch_size*episode_size, C, H, W]
+            if imgs.dim() == 5:
+                batch_size, episode_size = imgs.shape[:2]
+                imgs = imgs.view(batch_size * episode_size, *imgs.shape[2:])
+                labels = labels.view(batch_size * episode_size)
             embeddings = model(imgs)
 
             n_support = embeddings.size(0) // 2
