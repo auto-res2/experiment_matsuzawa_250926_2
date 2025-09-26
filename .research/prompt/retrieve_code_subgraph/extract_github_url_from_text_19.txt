@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology involves deriving qEHVI by extending Expected Hypervolume Improvement (EHVI) to the parallel, constrained setting. It utilizes box decompositions and the inclusion-exclusion principle to compute the joint Hypervolume Improvement (HVI) of 'q' new points. The expected value (EHVI) is then estimated via Monte-Carlo (MC) integration using samples from the joint posterior of a Gaussian Process (GP) surrogate model. Exact gradients of the MC estimator are computed using auto-differentiation and the re-parameterization trick. For optimization, the Sample Average Approximation (SAA) approach is employed, allowing for deterministic, higher-order optimizers. Outcome constraints are incorporated by feasibility-weighting on the sample-level, with a differentiable sigmoid approximation replacing the indicator function for differentiability. The formulation is designed for embarrassing parallelism.
+
+# GitHub URLs List
+['https://github.com/pytorch/botorch']
+Output:
+{
+    "index": 0
+}
