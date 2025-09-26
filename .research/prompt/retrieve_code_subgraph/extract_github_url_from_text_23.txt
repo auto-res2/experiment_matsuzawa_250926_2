@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+TSE measures the training speed of an architecture by summing the training losses of the SGD optimizer over a specified number of epochs. Mathematically, TSE = sum(1/B * sum(loss(f_theta_t_i(X_i), y_i))) where `l` is the training loss of a mini-batch, `f_theta` is the network output, `theta_t,i` are parameters, `T` is the number of epochs, and `B` is mini-batch count. The method is theoretically motivated by stability-based generalization bounds for SGD, neural-tangent-kernel complexity measures, information-theoretic generalization bounds that consider gradient variance, and PAC-Bayesian bounds (marginal likelihood can be bounded by a notion of training speed). Two variants are proposed: TSE-E, which sums losses over the 'E' most recent epochs (treating earlier epochs as a burn-in phase, with E=1 being the most recent epoch), and TSE-EMA, which uses an exponential moving average of training losses with a decay rate (e.g., gamma=0.999), assigning higher weight to later epochs. The choice of training loss over validation loss is emphasized, as validation losses can become unreliable due to models becoming overconfident on misclassified validation data, causing the loss to stagnate or rise even as accuracy improves.
+
+# GitHub URLs List
+['https://github.com/D-X-Y/NAS-Bench-201', 'https://github.com/automl/nasbench301', 'https://github.com/facebookresearch/nds']
+Output:
+{
+    "index": 2
+}
