@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+PER minimizes an upper bound of the 1-Wasserstein distance between the empirical distribution of activations and the standard normal distribution N(0,I). It leverages the sliced Wasserstein distance by randomly projecting high-dimensional activations onto a one-dimensional space using vectors drawn from a unit sphere. The regularization loss in this projected space is similar to the Pseudo-Huber loss, blending characteristics of L1 and L2 regularization. The gradient of the PER loss is derived and approximated using a Monte Carlo method with 's' number of samples (projections) during the backward pass. This approach is motivated by making the Fisher information matrix closer to identity, aligning with natural gradient principles. PER differentiates itself from Lp norm-based regularization by using adaptive order in the projected space and capturing interactions between hidden units through diverse projection vectors.
+
+# GitHub URLs List
+['https://github.com/pytorch/examples']
+Output:
+{
+    "index": null
+}
