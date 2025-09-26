@@ -1,0 +1,139 @@
+
+Input:
+You are a cutting-edge AI researcher. Based on the new method described in # New Methods and the experimental policy outlined in # Experiment Strategy, please follow the instructions below and provide a detailed elaboration of the experimental content.
+
+# Instructions
+- For each experiment listed in “Experiment Strategy,” output the detailed experimental plan.
+- Design the details of each experiment assuming the execution environment specified in “Experimental Environment.”
+- The experimental details should include the following:
+    - Machine learning / deep learning models to be used
+        - If necessary, also include baseline models.
+    - Datasets
+    - Dataset preprocessing methods
+    - Data splitting method (train/val/test, cross-validation)
+    - Number of repetitions (number of seeds), averaging method, and selection criteria (best-val, last, early stopping)
+    - Evaluation metrics
+        - Primary and secondary metrics
+        - Examples: Accuracy / F1 / AUROC (classification), RMSE / MAE (regression), mAP (detection), mIoU (segmentation), BLEU / ROUGE / METEOR (generation), NDCG / MRR (ranking), ECE / Brier Score (calibration)
+    - Comparisons
+        - Prior methods (strong baselines, SOTA, simple baselines), etc.
+        - If there are implementation or configuration differences, note the adjustments in footnotes.
+    - Methods for analyzing important hyperparameters (e.g., learning rate, temperature, k, thresholds)
+    - Methods for assessing robustness
+        - Resistance to noise injection, distribution shift (OOD), adversarial perturbations, and domain transfer
+    - Computation of FLOPs, training/inference time, memory usage, and cost / wall-clock time
+    - Example experimental code
+- In addition, describe the experimental details as thoroughly as possible. It is acceptable if the output is long.
+- Avoid excessive redundancy across experiments. When a single experiment can cover multiple validation items, integrate them appropriately.
+- NO-FALLBACK CONSTRAINT: Never suggest using synthetic/dummy/placeholder data - if real datasets are unavailable, the experiment must terminate with clear error messages.
+- "Reference Information from Previous Iteration"
+
+## Output Format
+Please provide:
+- experiment_details: Detailed experimental plan following all the instructions above
+- expected_models: A list of specific model names/architectures that will be used in the experiments (e.g., ["ResNet-50", "BERT-base", "GPT-3.5-turbo"])
+- expected_datasets: A list of specific dataset names that will be used in the experiments (e.g., ["CIFAR-10", "ImageNet", "IMDB Reviews"])
+
+
+# Experimental Environment
+NVIDIA A100
+VRAM：80GB
+RAM：2048 GB
+
+# Current Research Method (Target for Experiment Design)
+{
+    "Open Problems": "TENT minimises prediction entropy on *every* incoming batch with a fixed learning-rate update of BN affine parameters. \n1. Batches on which the model is already confident (low entropy) are still used for gradient steps – this wastes computation and may even hurt stability (catastrophic forgetting).\n2. All batches are treated equally; updates on truly shifted/high-entropy data do not receive extra emphasis, so many samples are needed before convergence.\n\nKey open problem: Can we make TENT converge with *fewer* optimisation steps by (a) skipping needless updates and (b) taking larger steps exactly when the model is most uncertain – using only a *very small* modification of its loss function / update rule?",
+    "Methods": "Entropy-Scaled Test-time Entropy Minimisation (ES-TENT)\n\nLet  H̄  be the mean prediction entropy of the current batch computed by TENT.  Define two hyper-parameters:  H_low  (confidence threshold) and  H_high  (maximum considered entropy, ≈ log (#classes)).  Compute a scale factor  s:\n        s = clip((H̄ − H_low)⁄(H_high − H_low), 0, 1).\n\nModify TENT’s loss from  L = mean(H)  to  L_ES = s · mean(H).\n\nUpdate rule:\n1. If  s = 0   (batch already confident) → skip backward / optimizer.step() – only a forward pass is done.\n2. Else run one standard optimisation step with the scaled loss (equivalent to multiplying the learning-rate by s).\n\nInterpretation\n• High-entropy (shifted) batches:  s≈1  ⇒ full-strength update, larger effective step ⇒ faster convergence.\n• Low-entropy (in-domain) batches:  s≈0  ⇒ no update ⇒ saves time and prevents drifting.\n\nThis keeps everything else in TENT unchanged (same parameters, same optimiser) – only two lines are added around the loss.",
+    "Experimental Setup": "Data: CIFAR-10-C and ImageNet-C (15 corruption types, severity 5) – identical to TENT.\nModels: ResNet-26 (CIFAR) and ResNet-50 (ImageNet) pretrained on clean data with BN.\nBaselines: (1) Source (no adaptation) (2) Original TENT (3) Proposed ES-TENT.\nMetrics: Top-1 error (%), wall-clock time per 10k test images, number of optimiser steps executed.\nHyper-parameters:  H_low  = 0.5·log(C),  H_high = log(C)  (C = #classes).  No change to learning-rate.\nProtocol: Online adaptation (same as TENT).  Measure accuracy after each 1k images to compare convergence speed.",
+    "Experimental Code": "# core change to tent.forward_and_adapt()\n@torch.enable_grad()\ndef forward_and_adapt_es(x, model, optimizer, H_low, H_high):\n    outputs = model(x)\n    batch_entropy = softmax_entropy(outputs)          # shape [B]\n    mean_H        = batch_entropy.mean()\n\n    # scale factor in [0,1]\n    s = torch.clamp((mean_H - H_low) / (H_high - H_low), 0., 1.)\n\n    if s.item() == 0.0:\n        # confident batch – skip update\n        return outputs       # forward only\n\n    loss = s * mean_H       # scaled entropy loss\n    loss.backward()\n    optimizer.step()\n    optimizer.zero_grad()\n    return outputs\n\n# usage inside a wrapped Tent model\nclass ESTent(Tent):\n    def __init__(self, model, optimizer, H_low, H_high, **kw):\n        super().__init__(model, optimizer, **kw)\n        self.H_low = H_low\n        self.H_high = H_high\n    def forward(self, x):\n        if self.episodic:\n            self.reset()\n        return forward_and_adapt_es(x, self.model, self.optimizer,\n                                    self.H_low, self.H_high)",
+    "Expected Result": "• ES-TENT executes ≈40-60 % fewer backward passes than TENT.\n• On CIFAR-10-C severity-5, error drops from TENT’s 13.9 % → 13.5 % while inference time per image is reduced by ≈35 %.\n• On ImageNet-C severity-5, error improves marginally (44.0 % → 43.5 %) with ≈30 % speed-up.\n• Accuracy curves vs processed samples show ES-TENT reaching TENT’s final accuracy after ~50 % of the data.",
+    "Expected Conclusion": "A one-line, entropy-based scaling of TENT’s loss lets the model *adapt when necessary and rest when confident*.  This simple change cuts computation and wall-clock time while slightly improving robustness, effectively solving the convergence-speed bottleneck without altering TENT’s architecture, parameters, or optimiser.  The idea is generic and can be dropped into any entropy-minimisation TTA method."
+}
+
+# Experiment Strategy
+EXPERIMENT 1 – Standard Corruption Benchmarks (Effectiveness + Efficiency)
+--------------------------------------------------------------------------------
+Goal: Show that ES-TENT reaches equal-or-better accuracy than TENT with far fewer optimisation steps on the de-facto test-time-adaptation benchmarks.
+
+Protocol
+1. Datasets   • CIFAR-10-C, CIFAR-100-C, ImageNet-C – all 15 corruption types, severities 1-5.
+2. Models     • ResNet-26, ResNet-50 and ViT-B/16 (BN added to MLP blocks via "BN-adapt"), pretrained on clean data.
+3. Baselines  • Source (no TTA) • TENT • ETA (entropy weight decay) • Ours (ES-TENT).
+4. Stream     Online inference in batches of 64; parameters are never reset (same as TENT).
+5. Metrics    • Top-1 error after every 1 k samples • Area-Under-Curve (AUC) of error vs #samples • #back-ward passes • Wall-clock time on 1×A100 • Peak GPU memory.
+
+Expected Outcome
+• For severities 3-5, ES-TENT equals or slightly surpasses TENT on final error (≈0.3-0.6 pp). 
+• ES-TENT attains TENT’s final error after ≈50 % of the data (AUC ↓ 20-30 %).
+• Backward passes ↓ 40-60 %; wall-clock time ↓ 30-35 %; memory identical.
+
+What it demonstrates: The proposed scaling/skip rule accelerates convergence and reduces computation without sacrificing—and sometimes improving—robustness across a wide range of corruptions.
+
+
+EXPERIMENT 2 – Ablation & Hyper-parameter Robustness (Why does it work?)
+-----------------------------------------------------------------------
+Goal: Isolate the contributions of “skip” and “scale” and test sensitivity to H_low/H_high.
+
+Variants
+A  Original TENT
+B  Skip-only (TENT update skipped when H̄ < H_low)
+C  Scale-only (loss = s·H̄ but never skipped)
+D  Full ES-TENT.
+
+Grid       H_low ∈ {0.3, 0.5, 0.7}·log C;   H_high ∈ {0.8, 1.0, 1.2}·log C.
+Dataset    CIFAR-10-C severity-5, 10 k samples.
+Metrics    Final error, AUC, #steps, time.
+
+Expected Outcome
+• Skip-only reduces steps/time but plateaus a bit higher than TENT.
+• Scale-only matches TENT speed but improves final error (~0.2 pp).
+• Full ES-TENT gets the best of both worlds (lowest AUC, fewest steps).
+• Performance is stable across the entire H_low/H_high grid (≤0.2 pp variance).
+
+What it demonstrates: Both components are necessary and the method is insensitive to hyper-parameters—satisfying the “very small modification” design goal.
+
+
+EXPERIMENT 3 – Continual Stream with Domain Reversals (Catastrophic Forgetting & Real-Time Savings)
+-------------------------------------------------------------------------------------------------
+Goal: Mimic a realistic scenario where the data distribution alternates between clean (in-domain) and shifted (out-of-domain) segments, and measure how well ES-TENT avoids unnecessary updates and forgetting.
+
+Stream   30 k CIFAR-10 images arranged as:
+   1-10 k  clean
+ 10-20 k  corruption=Gaussian noise-5
+ 20-25 k  back to clean
+ 25-30 k  corruption=JPEG 2-5 (severity increases every 1 k)
+
+Batch     128 images, real-time budget ≤ 3 ms/img (A100).
+Baselines  Source, TENT, ES-TENT.
+Metrics    • Running accuracy on the current segment
+            • Accuracy on a held-out clean validation set probed every 2 k imgs (measures forgetting)
+            • GPU utilisation & power (nvidia-smi) averaged per segment.
+
+Expected Outcome
+• During clean segments, ES-TENT does almost zero updates, sustaining ≥ 91 % accuracy (same as source) whereas TENT slowly drifts to 89 %.
+• On corrupted segments, ES-TENT adapts within ~500 images, matching TENT’s final accuracy but with 40 % fewer updates, keeping average latency < 2.5 ms/img (TENT ≈ 3.8 ms).
+• After returning to clean data, ES-TENT needs no "recovery" steps and therefore shows < 0.5 pp forgetting, vs TENT’s 2-3 pp.
+
+What it demonstrates: ES-TENT’s selective updating prevents catastrophic forgetting and delivers tangible speed/energy savings in a dynamic, real-world setting.
+
+Taken together, the three experiments validate ES-TENT’s effectiveness from complementary angles: benchmark accuracy & efficiency (Exp 1), mechanistic insight & robustness (Exp 2), and real-time deployment benefits (Exp 3).
+
+---
+
+
+# Reference Information from Previous Iteration
+
+Output:
+{
+    "experiment_details": "====================================================================\nGLOBAL SETTINGS (apply to all experiments unless overridden)\n--------------------------------------------------------------------\nExecution hardware : 1 × NVIDIA A100-80 GB GPU, CUDA-11.8, cuDNN-8.9\nFramework          : PyTorch 2.1 + torchvision 0.16  (compiled w/ CUDA)\nMixed precision     : Automatic Mixed Precision (AMP, bfloat16) for all\n                     forward / backward passes.  Grad-scaler disabled\n                     when s = 0 (skip) to avoid un-needed CUDA kernels.\nSeeds               : {0, 1, 2}.  3 independent runs → report mean ± sd.\nLogging             : wandb (per-run) + JSON summary artefacts committed\n                     to the project repo.\nTimer               : torch.cuda.Event for fine-grained GPU time,  time\n                     module for wall-clock.   Memory via torch.cuda.max_memory_allocated.\nFLOPs               : fvcore (flop_count_table) + ptflops;  profile on a\n                     64-sample batch once per corruption type.\n--------------------------------------------------------------------\nCOMMON PRE-PROCESSING PIPELINE\n‣ CIFAR-10/100-C :\n    – Input  : uint8 H×W×C (32²×3).\n    – Transf : ToTensor() → Normalise (μ=[0.491,0.482,0.447],\n               σ=[0.247,0.243,0.262]).\n‣ ImageNet-C  :\n    – Resize shorter side 256  →  CenterCrop 224 →  ToTensor() →\n      Normalise (μ=[0.485,0.456,0.406], σ=[0.229,0.224,0.225]).\n--------------------------------------------------------------------\nDATA SPLITTING  (TTA setting)\n• Entire corrupted test set is streamed once – no shuffling.\n• Clean validation split (held-out) : 5 000 images (CIFAR), 50 000\n  images (ImageNet-val) untouched by adaptation; used only for the\n  forgetting probe in Exp-3.\n--------------------------------------------------------------------\nOPTIMISER & TENT HYPER-PARAMS (all models)\n• Optimiser      : SGD(lr=1e-3, momentum=0.9, weight_decay=0).\n• Learnable params: BatchNorm affine γ, β only (same as TENT).\n• LR-schedule    : constant.  Effective LR is scaled by s at runtime.\n• Early-stopping : n/a (online); report both last and best-val.\n--------------------------------------------------------------------\nBASELINES IMPLEMENTATIONS\nA  Source     : no updates – identical forward.\nB  TENT¹      : https://github.com/DequanWang/tent  (commit 4e7552).\nC  ETA²       : re-implemented weight-decay on entropy.\nNotes: ¹BN ε changed from 1e-5→1e-3 for numerical parity across models.\n       ²ETA uses α=5e-4 wd on entropy as in the paper.\n--------------------------------------------------------------------\n====================================================================\nEXPERIMENT 1 — Standard Corruption Benchmarks\n====================================================================\nGoal  : Measure accuracy–efficiency trade-off on CIFAR-10-C, CIFAR-100-C,\n        ImageNet-C (15 corruptions × 5 severities).\n---------------------------------------------------------------\nMODELS\n• ResNet-26 (CIFAR)\n• ResNet-50 (ImageNet)\n• ViT-B/16-BN³ (CIFAR + ImageNet) – BatchNorm layers inserted after each\n  MLP block and between patch embedding & transformer encoder.\n  ³Implementation: timm==0.9.2 “vit_base_patch16_224” + custom BN.\n---------------------------------------------------------------\nSTREAM & BATCHING\nDataset        Batch  Images / experiment\nCIFAR-10-C      64    10 000 × 15 × 5 = 750k\nCIFAR-100-C     64    10 000 × 15 × 5 = 750k\nImageNet-C      64    50 000 × 15 × 5 = 3.75M\n---------------------------------------------------------------\nREPETITIONS\n‣ 3 seeds × 3 models × 4 methods = 36 runs per dataset.\n---------------------------------------------------------------\nPRIMARY METRICS\n1. Top-1 error (%) per 1k images\n2. Area-Under-Curve (AUC) of error vs #images  (lower = faster conv.)\n3. Backward-pass count (#optimiser.step calls)\nSECONDARY METRICS\n• Wall-clock time / 10k images\n• Peak GPU memory (MiB)\n• TFLOPs / image (measured w/ ptflops)\n---------------------------------------------------------------\nROBUSTNESS CHECKS WITHIN EXP-1\n– For each corruption severity {1,…,5} report accuracy;  evaluate OOD\n  gradient by computing Δerr(s) = err(s)-err(clean).\n– Add an adversarial corruption ‘speckle-noise’ (not in ImageNet-C) to\n  test hidden shift generalisation.\n---------------------------------------------------------------\nHYPER-PARAMS FOR ES-TENT (default)\nH_low  = 0.5·log(C) ;  H_high = log(C) .\n---------------------------------------------------------------\nEVALUATION PROTOCOL\nstep = 1  for every new mini-batch\nif batch_idx % (1k / batch_size) == 0 : log metrics\nAt the end of the stream: summarise final Top-1.\n---------------------------------------------------------------\nCOMPUTE BUDGET\n• CIFAR-10-C full run (ResNet-26): ≤ 2.1 GPU-hrs / seed.\n• ImageNet-C full run (ResNet-50):  ≈ 9.5 GPU-hrs / seed.\n• ViT-B/16 adds +35 % FLOPs.\nTotal project budget  < 1 600 A100-GPU-hrs  (within 1-week queue).\n---------------------------------------------------------------\nEXPECTED ANALYSIS FIGURES\n1. Error vs images curves (per corruption, averaged).\n2. Bar plots of backward-pass counts and wall-clock times.\n3. Table: Final error ± sd, AUC, speed-up.\n---------------------------------------------------------------\nEXAMPLE CODE SNIPPET\n>>> from estent import ESTent\n>>> from tent   import Tent\n>>> model = timm.create_model('resnet26', pretrained=True, bn_true=True)\n>>> tent  = Tent(model, steps=1, lr=1e-3)\n>>> estent= ESTent(model, steps=1, lr=1e-3,\n...                H_low=0.5*math.log(num_classes),\n...                H_high=math.log(num_classes))\nfor x,y in loader:\n    with torch.cuda.amp.autocast():\n        out = estent(x.cuda(non_blocking=True))\n    meter.update(out.argmax(1).cpu(), y)\n--------------------------------------------------------------------\n====================================================================\nEXPERIMENT 2 — Ablation & Hyper-parameter Robustness\n====================================================================\nGoal  : Decouple “skip” vs “scale” and stress-test H_low/H_high.\n---------------------------------------------------------------\nDATA\nCIFAR-10-C  severity-5 only, Gaussian blur corruption (worst-case) plus\nuniform sample of 4 additional corruptions (∴ 50 k images).\n---------------------------------------------------------------\nVARIANTS (same pretrained ResNet-26)\nA  TENT (baseline)\nB  Skip-only         : if H̄ < H_low → skip ; else loss = mean(H).\nC  Scale-only        : loss = s·H̄ ; never skipped (s∈(0,1]).\nD  ES-TENT (ours)    : full method.\n---------------------------------------------------------------\nGRID SEARCH\nH_low  ∈ {0.3,0.5,0.7}·log C\nH_high ∈ {0.8,1.0,1.2}·log C   → 3×3 = 9 configs × 4 variants = 36.\nEach run repeated for 3 seeds → 108 total.\n---------------------------------------------------------------\nMETRICS\n• Final Top-1 error (%)\n• AUC error vs #images\n• #optimiser steps\n• Wall-clock time (s)\n---------------------------------------------------------------\nANALYSIS TECHNIQUES\n• Response-surface plots (H_low vs H_high → error).\n• Two-way ANOVA to quantify main & interaction effects.\n• Pareto frontier (#steps vs error) for the 4 variants.\n---------------------------------------------------------------\nROBUSTNESS EXTENSION\nInject synthetic label noise: randomly flip 10 % labels in the stream;\nmeasure stability of each variant.\n---------------------------------------------------------------\nEXAMPLE CODE (grid launcher)\n```bash\npython run_ablation.py \\\n  --variant scale_only \\\n  --hlow 0.7 --hhigh 1.2 --seed 2\n```\n---------------------------------------------------------------\n====================================================================\nEXPERIMENT 3 — Continual Stream with Domain Reversals\n====================================================================\nGoal  : Demonstrate real-time benefit & reduced catastrophic forgetting.\n---------------------------------------------------------------\nSTREAM CONSTRUCTION\nSegment 1  (0-10k)   : clean CIFAR-10 test images\nSegment 2 (10-20k)   : Gaussian noise severity-5\nSegment 3 (20-25k)   : clean\nSegment 4 (25-30k)   : JPEG compression, severity increases 2→5.\nImages are ordered as they appear in the original datasets to preserve\nclass distribution.\n---------------------------------------------------------------\nBATCH & LATENCY CONSTRAINTS\nBatch size 128  (≈2.8 ms forward + 3.6 ms backward per batch @A100).\nReal-time budget 3 ms / image = 384 ms / batch → feasible.\n---------------------------------------------------------------\nMODELS & METHODS\nResNet-26  + {Source, TENT, ES-TENT}.\n---------------------------------------------------------------\nEVALUATION PROBES\n1. Online accuracy plotted every 128 imgs.\n2. Forgetting probe: accuracy on the held-out clean-val set every 2k.\n3. GPU utilisation & power: sample nvidia-smi --query-gpu=util,power.\n---------------------------------------------------------------\nROBUSTNESS EXTENSIONS\n– Mid-stream adversarial patch: at image 15k inject 7 % patch occlusion\n  in a 50×50 square; evaluate recovery.\n---------------------------------------------------------------\nSUCCESS CRITERIA\n• ES-TENT ≤0.5 pp drop on clean-val vs initial.\n• Avg latency  ≤2.5 ms / img  (TENT baseline ≈3.8 ms).\n• Energy saved ≥25 % (integral of power × time).\n---------------------------------------------------------------\nEXAMPLE LOOP\n```python\nmeter_val = AccuracyMeter()\nfor idx,(x,_) in enumerate(stream_loader):\n    start = time.time()\n    out = estent(x.cuda())\n    latency.update(time.time()-start)\n    if idx%16==0:   # every 2k imgs\n        evaluate_clean(model, clean_val_loader, meter_val)\n```\n====================================================================\nHYPER-PARAMETER ANALYSIS SUMMARY\n--------------------------------------------------------------------\nParameter            Range explored             Diagnostic plot\nH_low                0.3-0.7 · log C            err vs H_low (line)\nH_high               0.8-1.2 · log C            heat-map err\nLearning-rate (LR)   {1e-4,1e-3,3e-3}           error & #steps bar\nBatch size           {32,64,128}                latency vs mem\nTemperature (softmax) fixed 1; ablate 0.7,1.2 to confirm invariance.\n====================================================================\nROBUSTNESS & SAFETY TESTS (applied post-hoc to Exp-1 checkpoints)\n--------------------------------------------------------------------\n• Corruption types unseen during training: snow, frost (CIFAR-10-C ext.)\n• Covariate shift: style-transfer ImageNet-C-stylised.\n• Adversarial FGSM ε∈{1,2,4}/255 (evaluate defence degradation).\n• Calibration: Expected Calibration Error (ECE), Brier score.\n====================================================================\nCOMPUTE & COST REPORTING\n--------------------------------------------------------------------\nFor every experiment we log csv with columns:\n  run_id, model, method, gpu_hours, wall_clock_s, peak_mem_MiB,\n  train_FLOPs_G, infer_FLOPs_G, energy_kWh (GPU_power×time).\nEnergy computed with average 300 W draw on A100.\n====================================================================\nERROR HANDLING (NO-FALLBACK)\n--------------------------------------------------------------------\nIf ImageNet-C is not found at the specified path the launcher aborts with\nRuntimeError(\"ImageNet-C dataset missing – please download as per README\").\n====================================================================",
+    "expected_models": [
+        "ResNet-26",
+        "ResNet-50",
+        "ViT-B/16-BN"
+    ],
+    "expected_datasets": [
+        "CIFAR-10-C",
+        "CIFAR-100-C",
+        "ImageNet-C"
+    ]
+}
