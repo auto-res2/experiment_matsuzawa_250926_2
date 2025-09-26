@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed method, Interval Bound Interpolation (IBI), tackles few-task few-shot learning by leveraging Interval Bound Propagation (IBP) to preserve task manifold neighborhoods and generate artificial training tasks. For each training task, a small ϵ-neighborhood is defined around input samples. IBP is used to calculate axis-aligned lower (fθS(x,ϵ)) and upper (fθS(x,ϵ)) bounds for the feature embeddings (fθS) of these neighborhoods. The learning objective minimizes a dynamically weighted sum of three losses: the standard cross-entropy classification loss (LCE) and two novel losses (LLB, LUB) that minimize the Euclidean distances between the feature embedding and its respective IBP bounds, ensuring neighborhood compactness. Artificial tasks are created by interpolating between original tasks' feature embeddings and their IBP bounds using a Beta distribution for mixing coefficients (λk) and a random choice (νk) for upper or lower bound. The overall loss function dynamically adjusts weights for LCE, LLB, and LUB using a softmax over their current values, controlled by a hyperparameter γ. The framework is integrated with and evaluated on both Model-Agnostic Meta-Learning (MAML) and Prototypical Networks (ProtoNet). Theoretical analysis demonstrates that Lipschitz networks ensure bounded IBP, and a generalization bound shows the method's excess risk behaves approximately linearly with the perturbation parameter ϵ, circumventing the curse of dimensionality.
+
+# GitHub URLs List
+['https://github.com/SankhaSubhra/maml-ibp-ibi']
+Output:
+{
+    "index": 0
+}
