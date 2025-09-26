@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology involves formalizing federated hyperparameter optimization for both global and personalized FL objectives. Baselines are established by adapting standard non-federated algorithms like Random Search (RS) and Successive Halving (SHA) for noisy validation signals. The core contribution is FedEx, which treats local training hyperparameters as trainable model parameters via a weight-sharing approach. It transforms the personalized objective into a single-level empirical risk minimization (ERM) problem and uses a stochastic relaxation where hyperparameters are sampled from a parameterized distribution Dθ. Model weights (w) are updated using standard SGD, while the distribution parameters (θ) are updated using exponentiated gradient, alternating between these two steps. FedEx can be wrapped by RS or SHA to tune server-side hyperparameters and FedEx's own meta-hyperparameters. A local perturbation scheme is used to initialize the discrete configurations for the categorical distribution over hyperparameters. Theoretically, the paper analyzes a FedEx variant using the ARUBA framework in an online convex optimization (OCO) setting to prove guarantees for tuning the client step-size based on task-averaged regret.
+
+# GitHub URLs List
+['https://github.com/mkhodak/fedex', 'https://github.com/TalwalkarLab/leaf']
+Output:
+{
+    "index": 0
+}
