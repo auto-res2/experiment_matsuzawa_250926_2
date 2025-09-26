@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+PaPi employs a shared feature encoder (f(·)) and a projector network (g(·)) to map augmented input images into low-dimensional representations. A linear classifier (h(·)) operates on these representations. Key components include: 1) **Prototypical Alignment Loss**: A prototypical similarity distribution (sl_i) is generated for each sample based on softmax over distances to class-specific prototypes in the projected space. This is aligned with a disambiguated probability (p_i), which is iteratively updated from the linear classifier's prediction using a soft, moving-average mechanism. The alignment is achieved by minimizing the Kullback-Leibler (KL) divergence between these distributions. 2) **Self-Teaching Mechanism**: The linear classifier performs self-teaching, where each learning stage is guided by current and previous stages. 3) **Mixup Augmentation**: New training samples are created by linearly interpolating existing samples, and a weighted augmented alignment loss is applied. 4) **Prototype Evolving**: Class prototypes are updated using a moving-average of normalized representations of samples assigned to that class. The overall objective minimizes a weighted sum of the classification loss (cross-entropy with p_i as target) and the prototypical alignment loss, with a dynamic balancing function.
+
+# GitHub URLs List
+['https://github.com/AlphaXia/PaPi']
+Output:
+{
+    "index": 0
+}
