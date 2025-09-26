@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves framing HPO as a few-shot learning task. A deep kernel network, consisting of a neural network (e.g., two-layer 128→128 with ReLU) combined with a squared-exponential kernel, is used as a Gaussian Process surrogate. This deep kernel is meta-learned in an end-to-end fashion across a collection of training datasets using an adaptation of Model-Agnostic Meta-Learning (MAML) for Gaussian Processes. Parameters (θ and w) are learned by maximizing the log marginal likelihood across all tasks via Stochastic Gradient Ascent (SGA). A task augmentation strategy is employed during training, where labels for each batch are randomly scaled to address normalization issues and make the model invariant to different response function ranges. At test time, the deep kernel parameters are fine-tuned on the target task's data for improved adaptation. Furthermore, an evolutionary algorithm leverages the meta-learned surrogate to estimate a data-driven warm-start initialization for Bayesian optimization, by finding a set of hyperparameters that minimizes normalized regret over source tasks.
+
+# GitHub URLs List
+['https://github.com/boschresearch/MetaBO']
+Output:
+{
+    "index": 0
+}
