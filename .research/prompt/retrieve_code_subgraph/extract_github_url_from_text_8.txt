@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The BOIL framework employs a Gaussian Process (GP) to model the cost-sensitive black-box objective function f(x,t) across a joint space of hyperparameters (x) and training iterations (t). A product kernel, k(x,x') × k(t,t'), is used to induce joint similarities. The training time cost c(x,t) is approximated by a linear regressor. For point acquisition, a modified Expected Improvement (EI) criterion, scaled by the estimated cost (α(x,t)/µc(x,t)), guides the search to balance exploitation, exploration, and cost. A core component is the training curve compression, which uses a Logistic (Sigmoid) function l(u|m0,g0) to convert raw learning curves into a single numeric score. The parameters (m0 and g0) of this Logistic function are learned dynamically by maximizing the GP's log marginal likelihood. To enhance sample efficiency and prevent numerical instability (ill-conditioning of the GP covariance matrix), a selective data augmentation technique is used. This method actively samples a subset of points from the observed training curve based on maximum GP predictive uncertainty, ensuring the natural logarithm of the covariance matrix condition number remains below a predefined threshold (δ=20), and these augmented points are added to the GP's training data.
+
+# GitHub URLs List
+['https://github.com/ntienvu/BOIL']
+Output:
+{
+    "index": 0
+}
