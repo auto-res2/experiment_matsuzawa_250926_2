@@ -1,0 +1,425 @@
+
+Input:
+You are a cutting-edge AI researcher preparing the COMMON CORE FOUNDATION for experiments that will ensure consistency across all experimental variations.
+
+This step generates the **COMMON CORE FOUNDATION** for experiments that will ensure consistency across all experimental variations.
+
+**Current Task**: Generate common base logic, evaluation framework, and infrastructure with placeholders for specific datasets/models
+**Next Step**: A subsequent step will derive specific experiments by replacing placeholders with actual datasets/models
+
+Based on the research method in # Current Research Method and experimental design in # Experimental Design, generate the foundational code that will serve as the common base for ALL experimental variations.
+
+# Instructions: Common Core Foundation Generation
+
+## Core Requirements
+- **COMMON EVALUATION LOGIC**: Implement consistent evaluation metrics, result collection, and comparison logic that will work across all experimental variations
+- **CORE ALGORITHM IMPLEMENTATION**: Implement the main method/algorithm with full functionality
+- **INFRASTRUCTURE CODE**: Complete training loops, model saving/loading, configuration handling, and result visualization
+- **PLACEHOLDER STRATEGY**: Use clear, descriptive placeholders for dataset-specific and model-specific components that will be replaced in subsequent steps
+- **CONSISTENCY FRAMEWORK**: Ensure all experiments will use identical evaluation criteria, metrics calculation, and result formatting
+
+## Placeholder Guidelines
+- Use descriptive placeholder names like `DATASET_PLACEHOLDER`, `MODEL_PLACEHOLDER`, `SPECIFIC_CONFIG_PLACEHOLDER`
+- Include comments explaining what will be replaced: `# PLACEHOLDER: Will be replaced with specific dataset loading logic`
+- Ensure placeholders are easily identifiable and replaceable in the next phase
+- Keep the base logic intact - only dataset/model-specific parts should be placeholders
+
+## Implementation Requirements
+- **ZERO PLACEHOLDER POLICY FOR CORE LOGIC**: Generate complete, production-ready base framework. NO placeholders for training loops, evaluation logic, or result processing.
+- **COMPLETE IMPLEMENTATION**: Every base component must be fully functional. No "omitted for brevity", no "simplified version" for base logic.
+- **PUBLICATION-READY INFRASTRUCTURE**: Framework must produce actual publication-worthy results when datasets/models are specified
+- **USE PYTORCH EXCLUSIVELY** as the deep learning framework
+- **COMPLETE DATA PIPELINE FRAMEWORK**: Implement data loading and preprocessing pipeline with placeholders for specific datasets
+- **COMPREHENSIVE EXPERIMENT INFRASTRUCTURE**: Full-scale experiment framework with sufficient training epochs, proper validation splits, and thorough evaluation metrics
+- **STRUCTURED PLACEHOLDER APPROACH**: Use well-defined placeholders for dataset/model specifics while ensuring base logic is complete and functional
+
+## Results Documentation Requirements
+- Save the results of each experiment as separate JSON files and modify the code to print the contents of the JSON files to standard output using a print statement.
+
+## Standard Output Content Requirements
+- Experiment description: Before printing experimental results, the standard output must include a detailed description of the experiment.
+- Experimental numerical data: All experimental data obtained in the experiments must be output to the standard output.
+- Names of figures summarizing the numerical data
+
+## Figure Output Requirements
+- Experimental results must always be presented in clear and interpretable figures without exception.
+- Use matplotlib or seaborn to output the results (e.g., accuracy, loss curves, confusion matrix).
+- Numeric values must be annotated on the axes of the graphs.
+- For line graphs, annotate values on the plot; for bar graphs, annotate values above each bar.
+- Include legends in the figures.
+- All figures must be saved in .pdf format (e.g., using plt.savefig("filename.pdf", bbox_inches="tight")).
+  - Do not use .png or any other formats—only .pdf is acceptable for publication quality.
+
+## Figure Naming Convention
+File names must follow the format: `<figure_topic>[_<condition>][_pairN].pdf`
+- `<figure_topic>`: The main subject of the figure (e.g., training_loss, accuracy, inference_latency)
+- `_<condition>` (optional): Indicates model, setting, or comparison condition (e.g., amict, baseline, tokens, multimodal_vs_text)
+- `_pairN` (optional): Used when presenting figures in pairs (e.g., _pair1, _pair2)
+- For standalone figures, do not include _pairN.
+
+
+- Environment Variables: The following environment variables are available: HF_TOKEN, ANTHROPIC_API_KEY
+
+
+## Command Line Interface
+The generated main.py must support:
+```bash
+# Smoke test with any dataset/model combination
+uv run python -m src.main --smoke-test
+
+# Full experiment with any dataset/model combination
+uv run python -m src.main --full-experiment
+```
+
+## Output Structure
+Generate complete foundational code for these files ONLY. Do not create any additional files beyond this structure:
+
+### Script Structure (ExperimentCode format)
+Your output must contain EXACTLY these 7 files with NO additional files:
+- `src/train.py`: Core training logic with algorithm implementation and placeholder data loading
+- `src/evaluate.py`: Universal evaluation framework that works across all experimental variations
+- `src/preprocess.py`: Common preprocessing pipeline with dataset placeholders
+- `src/main.py`: Main execution script with flexible configuration system
+- `pyproject.toml`: Complete project dependencies
+- `config/smoke_test.yaml`: Base configuration template for quick validation
+- `config/full_experiment.yaml`: Base configuration template for full experiments
+
+### Key Implementation Focus Areas
+1. **Evaluation Consistency**: Identical metrics calculation, result formatting, and comparison logic
+2. **Algorithm Core**: Full implementation of the proposed method with proper abstraction
+3. **Result Infrastructure**: Consistent figure generation, data saving, and output formatting
+4. **Configuration Flexibility**: System that can handle different datasets/models via configuration
+
+
+## Core code Validation Feedback
+
+
+
+
+# Experimental Environment
+NVIDIA A100
+VRAM：80GB
+RAM：2048 GB
+
+# Current Research Method (Target for Experiment Design)
+{
+    "Open Problems": "TENT minimises prediction entropy on *every* incoming batch with a fixed learning-rate update of BN affine parameters. \n1. Batches on which the model is already confident (low entropy) are still used for gradient steps – this wastes computation and may even hurt stability (catastrophic forgetting).\n2. All batches are treated equally; updates on truly shifted/high-entropy data do not receive extra emphasis, so many samples are needed before convergence.\n\nKey open problem: Can we make TENT converge with *fewer* optimisation steps by (a) skipping needless updates and (b) taking larger steps exactly when the model is most uncertain – using only a *very small* modification of its loss function / update rule?",
+    "Methods": "Entropy-Scaled Test-time Entropy Minimisation (ES-TENT)\n\nLet  H̄  be the mean prediction entropy of the current batch computed by TENT.  Define two hyper-parameters:  H_low  (confidence threshold) and  H_high  (maximum considered entropy, ≈ log (#classes)).  Compute a scale factor  s:\n        s = clip((H̄ − H_low)⁄(H_high − H_low), 0, 1).\n\nModify TENT’s loss from  L = mean(H)  to  L_ES = s · mean(H).\n\nUpdate rule:\n1. If  s = 0   (batch already confident) → skip backward / optimizer.step() – only a forward pass is done.\n2. Else run one standard optimisation step with the scaled loss (equivalent to multiplying the learning-rate by s).\n\nInterpretation\n• High-entropy (shifted) batches:  s≈1  ⇒ full-strength update, larger effective step ⇒ faster convergence.\n• Low-entropy (in-domain) batches:  s≈0  ⇒ no update ⇒ saves time and prevents drifting.\n\nThis keeps everything else in TENT unchanged (same parameters, same optimiser) – only two lines are added around the loss.",
+    "Experimental Setup": "Data: CIFAR-10-C and ImageNet-C (15 corruption types, severity 5) – identical to TENT.\nModels: ResNet-26 (CIFAR) and ResNet-50 (ImageNet) pretrained on clean data with BN.\nBaselines: (1) Source (no adaptation) (2) Original TENT (3) Proposed ES-TENT.\nMetrics: Top-1 error (%), wall-clock time per 10k test images, number of optimiser steps executed.\nHyper-parameters:  H_low  = 0.5·log(C),  H_high = log(C)  (C = #classes).  No change to learning-rate.\nProtocol: Online adaptation (same as TENT).  Measure accuracy after each 1k images to compare convergence speed.",
+    "Experimental Code": "# core change to tent.forward_and_adapt()\n@torch.enable_grad()\ndef forward_and_adapt_es(x, model, optimizer, H_low, H_high):\n    outputs = model(x)\n    batch_entropy = softmax_entropy(outputs)          # shape [B]\n    mean_H        = batch_entropy.mean()\n\n    # scale factor in [0,1]\n    s = torch.clamp((mean_H - H_low) / (H_high - H_low), 0., 1.)\n\n    if s.item() == 0.0:\n        # confident batch – skip update\n        return outputs       # forward only\n\n    loss = s * mean_H       # scaled entropy loss\n    loss.backward()\n    optimizer.step()\n    optimizer.zero_grad()\n    return outputs\n\n# usage inside a wrapped Tent model\nclass ESTent(Tent):\n    def __init__(self, model, optimizer, H_low, H_high, **kw):\n        super().__init__(model, optimizer, **kw)\n        self.H_low = H_low\n        self.H_high = H_high\n    def forward(self, x):\n        if self.episodic:\n            self.reset()\n        return forward_and_adapt_es(x, self.model, self.optimizer,\n                                    self.H_low, self.H_high)",
+    "Expected Result": "• ES-TENT executes ≈40-60 % fewer backward passes than TENT.\n• On CIFAR-10-C severity-5, error drops from TENT’s 13.9 % → 13.5 % while inference time per image is reduced by ≈35 %.\n• On ImageNet-C severity-5, error improves marginally (44.0 % → 43.5 %) with ≈30 % speed-up.\n• Accuracy curves vs processed samples show ES-TENT reaching TENT’s final accuracy after ~50 % of the data.",
+    "Expected Conclusion": "A one-line, entropy-based scaling of TENT’s loss lets the model *adapt when necessary and rest when confident*.  This simple change cuts computation and wall-clock time while slightly improving robustness, effectively solving the convergence-speed bottleneck without altering TENT’s architecture, parameters, or optimiser.  The idea is generic and can be dropped into any entropy-minimisation TTA method."
+}
+
+# Experimental Design
+- Strategy: EXPERIMENT 1 – Standard Corruption Benchmarks (Effectiveness + Efficiency)
+--------------------------------------------------------------------------------
+Goal: Show that ES-TENT reaches equal-or-better accuracy than TENT with far fewer optimisation steps on the de-facto test-time-adaptation benchmarks.
+
+Protocol
+1. Datasets   • CIFAR-10-C, CIFAR-100-C, ImageNet-C – all 15 corruption types, severities 1-5.
+2. Models     • ResNet-26, ResNet-50 and ViT-B/16 (BN added to MLP blocks via "BN-adapt"), pretrained on clean data.
+3. Baselines  • Source (no TTA) • TENT • ETA (entropy weight decay) • Ours (ES-TENT).
+4. Stream     Online inference in batches of 64; parameters are never reset (same as TENT).
+5. Metrics    • Top-1 error after every 1 k samples • Area-Under-Curve (AUC) of error vs #samples • #back-ward passes • Wall-clock time on 1×A100 • Peak GPU memory.
+
+Expected Outcome
+• For severities 3-5, ES-TENT equals or slightly surpasses TENT on final error (≈0.3-0.6 pp). 
+• ES-TENT attains TENT’s final error after ≈50 % of the data (AUC ↓ 20-30 %).
+• Backward passes ↓ 40-60 %; wall-clock time ↓ 30-35 %; memory identical.
+
+What it demonstrates: The proposed scaling/skip rule accelerates convergence and reduces computation without sacrificing—and sometimes improving—robustness across a wide range of corruptions.
+
+
+EXPERIMENT 2 – Ablation & Hyper-parameter Robustness (Why does it work?)
+-----------------------------------------------------------------------
+Goal: Isolate the contributions of “skip” and “scale” and test sensitivity to H_low/H_high.
+
+Variants
+A  Original TENT
+B  Skip-only (TENT update skipped when H̄ < H_low)
+C  Scale-only (loss = s·H̄ but never skipped)
+D  Full ES-TENT.
+
+Grid       H_low ∈ {0.3, 0.5, 0.7}·log C;   H_high ∈ {0.8, 1.0, 1.2}·log C.
+Dataset    CIFAR-10-C severity-5, 10 k samples.
+Metrics    Final error, AUC, #steps, time.
+
+Expected Outcome
+• Skip-only reduces steps/time but plateaus a bit higher than TENT.
+• Scale-only matches TENT speed but improves final error (~0.2 pp).
+• Full ES-TENT gets the best of both worlds (lowest AUC, fewest steps).
+• Performance is stable across the entire H_low/H_high grid (≤0.2 pp variance).
+
+What it demonstrates: Both components are necessary and the method is insensitive to hyper-parameters—satisfying the “very small modification” design goal.
+
+
+EXPERIMENT 3 – Continual Stream with Domain Reversals (Catastrophic Forgetting & Real-Time Savings)
+-------------------------------------------------------------------------------------------------
+Goal: Mimic a realistic scenario where the data distribution alternates between clean (in-domain) and shifted (out-of-domain) segments, and measure how well ES-TENT avoids unnecessary updates and forgetting.
+
+Stream   30 k CIFAR-10 images arranged as:
+   1-10 k  clean
+ 10-20 k  corruption=Gaussian noise-5
+ 20-25 k  back to clean
+ 25-30 k  corruption=JPEG 2-5 (severity increases every 1 k)
+
+Batch     128 images, real-time budget ≤ 3 ms/img (A100).
+Baselines  Source, TENT, ES-TENT.
+Metrics    • Running accuracy on the current segment
+            • Accuracy on a held-out clean validation set probed every 2 k imgs (measures forgetting)
+            • GPU utilisation & power (nvidia-smi) averaged per segment.
+
+Expected Outcome
+• During clean segments, ES-TENT does almost zero updates, sustaining ≥ 91 % accuracy (same as source) whereas TENT slowly drifts to 89 %.
+• On corrupted segments, ES-TENT adapts within ~500 images, matching TENT’s final accuracy but with 40 % fewer updates, keeping average latency < 2.5 ms/img (TENT ≈ 3.8 ms).
+• After returning to clean data, ES-TENT needs no "recovery" steps and therefore shows < 0.5 pp forgetting, vs TENT’s 2-3 pp.
+
+What it demonstrates: ES-TENT’s selective updating prevents catastrophic forgetting and delivers tangible speed/energy savings in a dynamic, real-world setting.
+
+Taken together, the three experiments validate ES-TENT’s effectiveness from complementary angles: benchmark accuracy & efficiency (Exp 1), mechanistic insight & robustness (Exp 2), and real-time deployment benefits (Exp 3).
+- Details: ====================================================================
+GLOBAL SETTINGS (apply to all experiments unless overridden)
+--------------------------------------------------------------------
+Execution hardware : 1 × NVIDIA A100-80 GB GPU, CUDA-11.8, cuDNN-8.9
+Framework          : PyTorch 2.1 + torchvision 0.16  (compiled w/ CUDA)
+Mixed precision     : Automatic Mixed Precision (AMP, bfloat16) for all
+                     forward / backward passes.  Grad-scaler disabled
+                     when s = 0 (skip) to avoid un-needed CUDA kernels.
+Seeds               : {0, 1, 2}.  3 independent runs → report mean ± sd.
+Logging             : wandb (per-run) + JSON summary artefacts committed
+                     to the project repo.
+Timer               : torch.cuda.Event for fine-grained GPU time,  time
+                     module for wall-clock.   Memory via torch.cuda.max_memory_allocated.
+FLOPs               : fvcore (flop_count_table) + ptflops;  profile on a
+                     64-sample batch once per corruption type.
+--------------------------------------------------------------------
+COMMON PRE-PROCESSING PIPELINE
+‣ CIFAR-10/100-C :
+    – Input  : uint8 H×W×C (32²×3).
+    – Transf : ToTensor() → Normalise (μ=[0.491,0.482,0.447],
+               σ=[0.247,0.243,0.262]).
+‣ ImageNet-C  :
+    – Resize shorter side 256  →  CenterCrop 224 →  ToTensor() →
+      Normalise (μ=[0.485,0.456,0.406], σ=[0.229,0.224,0.225]).
+--------------------------------------------------------------------
+DATA SPLITTING  (TTA setting)
+• Entire corrupted test set is streamed once – no shuffling.
+• Clean validation split (held-out) : 5 000 images (CIFAR), 50 000
+  images (ImageNet-val) untouched by adaptation; used only for the
+  forgetting probe in Exp-3.
+--------------------------------------------------------------------
+OPTIMISER & TENT HYPER-PARAMS (all models)
+• Optimiser      : SGD(lr=1e-3, momentum=0.9, weight_decay=0).
+• Learnable params: BatchNorm affine γ, β only (same as TENT).
+• LR-schedule    : constant.  Effective LR is scaled by s at runtime.
+• Early-stopping : n/a (online); report both last and best-val.
+--------------------------------------------------------------------
+BASELINES IMPLEMENTATIONS
+A  Source     : no updates – identical forward.
+B  TENT¹      : https://github.com/DequanWang/tent  (commit 4e7552).
+C  ETA²       : re-implemented weight-decay on entropy.
+Notes: ¹BN ε changed from 1e-5→1e-3 for numerical parity across models.
+       ²ETA uses α=5e-4 wd on entropy as in the paper.
+--------------------------------------------------------------------
+====================================================================
+EXPERIMENT 1 — Standard Corruption Benchmarks
+====================================================================
+Goal  : Measure accuracy–efficiency trade-off on CIFAR-10-C, CIFAR-100-C,
+        ImageNet-C (15 corruptions × 5 severities).
+---------------------------------------------------------------
+MODELS
+• ResNet-26 (CIFAR)
+• ResNet-50 (ImageNet)
+• ViT-B/16-BN³ (CIFAR + ImageNet) – BatchNorm layers inserted after each
+  MLP block and between patch embedding & transformer encoder.
+  ³Implementation: timm==0.9.2 “vit_base_patch16_224” + custom BN.
+---------------------------------------------------------------
+STREAM & BATCHING
+Dataset        Batch  Images / experiment
+CIFAR-10-C      64    10 000 × 15 × 5 = 750k
+CIFAR-100-C     64    10 000 × 15 × 5 = 750k
+ImageNet-C      64    50 000 × 15 × 5 = 3.75M
+---------------------------------------------------------------
+REPETITIONS
+‣ 3 seeds × 3 models × 4 methods = 36 runs per dataset.
+---------------------------------------------------------------
+PRIMARY METRICS
+1. Top-1 error (%) per 1k images
+2. Area-Under-Curve (AUC) of error vs #images  (lower = faster conv.)
+3. Backward-pass count (#optimiser.step calls)
+SECONDARY METRICS
+• Wall-clock time / 10k images
+• Peak GPU memory (MiB)
+• TFLOPs / image (measured w/ ptflops)
+---------------------------------------------------------------
+ROBUSTNESS CHECKS WITHIN EXP-1
+– For each corruption severity {1,…,5} report accuracy;  evaluate OOD
+  gradient by computing Δerr(s) = err(s)-err(clean).
+– Add an adversarial corruption ‘speckle-noise’ (not in ImageNet-C) to
+  test hidden shift generalisation.
+---------------------------------------------------------------
+HYPER-PARAMS FOR ES-TENT (default)
+H_low  = 0.5·log(C) ;  H_high = log(C) .
+---------------------------------------------------------------
+EVALUATION PROTOCOL
+step = 1  for every new mini-batch
+if batch_idx % (1k / batch_size) == 0 : log metrics
+At the end of the stream: summarise final Top-1.
+---------------------------------------------------------------
+COMPUTE BUDGET
+• CIFAR-10-C full run (ResNet-26): ≤ 2.1 GPU-hrs / seed.
+• ImageNet-C full run (ResNet-50):  ≈ 9.5 GPU-hrs / seed.
+• ViT-B/16 adds +35 % FLOPs.
+Total project budget  < 1 600 A100-GPU-hrs  (within 1-week queue).
+---------------------------------------------------------------
+EXPECTED ANALYSIS FIGURES
+1. Error vs images curves (per corruption, averaged).
+2. Bar plots of backward-pass counts and wall-clock times.
+3. Table: Final error ± sd, AUC, speed-up.
+---------------------------------------------------------------
+EXAMPLE CODE SNIPPET
+>>> from estent import ESTent
+>>> from tent   import Tent
+>>> model = timm.create_model('resnet26', pretrained=True, bn_true=True)
+>>> tent  = Tent(model, steps=1, lr=1e-3)
+>>> estent= ESTent(model, steps=1, lr=1e-3,
+...                H_low=0.5*math.log(num_classes),
+...                H_high=math.log(num_classes))
+for x,y in loader:
+    with torch.cuda.amp.autocast():
+        out = estent(x.cuda(non_blocking=True))
+    meter.update(out.argmax(1).cpu(), y)
+--------------------------------------------------------------------
+====================================================================
+EXPERIMENT 2 — Ablation & Hyper-parameter Robustness
+====================================================================
+Goal  : Decouple “skip” vs “scale” and stress-test H_low/H_high.
+---------------------------------------------------------------
+DATA
+CIFAR-10-C  severity-5 only, Gaussian blur corruption (worst-case) plus
+uniform sample of 4 additional corruptions (∴ 50 k images).
+---------------------------------------------------------------
+VARIANTS (same pretrained ResNet-26)
+A  TENT (baseline)
+B  Skip-only         : if H̄ < H_low → skip ; else loss = mean(H).
+C  Scale-only        : loss = s·H̄ ; never skipped (s∈(0,1]).
+D  ES-TENT (ours)    : full method.
+---------------------------------------------------------------
+GRID SEARCH
+H_low  ∈ {0.3,0.5,0.7}·log C
+H_high ∈ {0.8,1.0,1.2}·log C   → 3×3 = 9 configs × 4 variants = 36.
+Each run repeated for 3 seeds → 108 total.
+---------------------------------------------------------------
+METRICS
+• Final Top-1 error (%)
+• AUC error vs #images
+• #optimiser steps
+• Wall-clock time (s)
+---------------------------------------------------------------
+ANALYSIS TECHNIQUES
+• Response-surface plots (H_low vs H_high → error).
+• Two-way ANOVA to quantify main & interaction effects.
+• Pareto frontier (#steps vs error) for the 4 variants.
+---------------------------------------------------------------
+ROBUSTNESS EXTENSION
+Inject synthetic label noise: randomly flip 10 % labels in the stream;
+measure stability of each variant.
+---------------------------------------------------------------
+EXAMPLE CODE (grid launcher)
+```bash
+python run_ablation.py \
+  --variant scale_only \
+  --hlow 0.7 --hhigh 1.2 --seed 2
+```
+---------------------------------------------------------------
+====================================================================
+EXPERIMENT 3 — Continual Stream with Domain Reversals
+====================================================================
+Goal  : Demonstrate real-time benefit & reduced catastrophic forgetting.
+---------------------------------------------------------------
+STREAM CONSTRUCTION
+Segment 1  (0-10k)   : clean CIFAR-10 test images
+Segment 2 (10-20k)   : Gaussian noise severity-5
+Segment 3 (20-25k)   : clean
+Segment 4 (25-30k)   : JPEG compression, severity increases 2→5.
+Images are ordered as they appear in the original datasets to preserve
+class distribution.
+---------------------------------------------------------------
+BATCH & LATENCY CONSTRAINTS
+Batch size 128  (≈2.8 ms forward + 3.6 ms backward per batch @A100).
+Real-time budget 3 ms / image = 384 ms / batch → feasible.
+---------------------------------------------------------------
+MODELS & METHODS
+ResNet-26  + {Source, TENT, ES-TENT}.
+---------------------------------------------------------------
+EVALUATION PROBES
+1. Online accuracy plotted every 128 imgs.
+2. Forgetting probe: accuracy on the held-out clean-val set every 2k.
+3. GPU utilisation & power: sample nvidia-smi --query-gpu=util,power.
+---------------------------------------------------------------
+ROBUSTNESS EXTENSIONS
+– Mid-stream adversarial patch: at image 15k inject 7 % patch occlusion
+  in a 50×50 square; evaluate recovery.
+---------------------------------------------------------------
+SUCCESS CRITERIA
+• ES-TENT ≤0.5 pp drop on clean-val vs initial.
+• Avg latency  ≤2.5 ms / img  (TENT baseline ≈3.8 ms).
+• Energy saved ≥25 % (integral of power × time).
+---------------------------------------------------------------
+EXAMPLE LOOP
+```python
+meter_val = AccuracyMeter()
+for idx,(x,_) in enumerate(stream_loader):
+    start = time.time()
+    out = estent(x.cuda())
+    latency.update(time.time()-start)
+    if idx%16==0:   # every 2k imgs
+        evaluate_clean(model, clean_val_loader, meter_val)
+```
+====================================================================
+HYPER-PARAMETER ANALYSIS SUMMARY
+--------------------------------------------------------------------
+Parameter            Range explored             Diagnostic plot
+H_low                0.3-0.7 · log C            err vs H_low (line)
+H_high               0.8-1.2 · log C            heat-map err
+Learning-rate (LR)   {1e-4,1e-3,3e-3}           error & #steps bar
+Batch size           {32,64,128}                latency vs mem
+Temperature (softmax) fixed 1; ablate 0.7,1.2 to confirm invariance.
+====================================================================
+ROBUSTNESS & SAFETY TESTS (applied post-hoc to Exp-1 checkpoints)
+--------------------------------------------------------------------
+• Corruption types unseen during training: snow, frost (CIFAR-10-C ext.)
+• Covariate shift: style-transfer ImageNet-C-stylised.
+• Adversarial FGSM ε∈{1,2,4}/255 (evaluate defence degradation).
+• Calibration: Expected Calibration Error (ECE), Brier score.
+====================================================================
+COMPUTE & COST REPORTING
+--------------------------------------------------------------------
+For every experiment we log csv with columns:
+  run_id, model, method, gpu_hours, wall_clock_s, peak_mem_MiB,
+  train_FLOPs_G, infer_FLOPs_G, energy_kWh (GPU_power×time).
+Energy computed with average 300 W draw on A100.
+====================================================================
+ERROR HANDLING (NO-FALLBACK)
+--------------------------------------------------------------------
+If ImageNet-C is not found at the specified path the launcher aborts with
+RuntimeError("ImageNet-C dataset missing – please download as per README").
+====================================================================
+
+
+
+# Reference Information from Previous Iteration
+
+
+Remember: This is the FOUNDATION that will ensure ALL experimental variations are conducted on the same rigorous, consistent basis. Focus on creating robust base logic with strategic placeholders for dataset/model specifics.
+Output:
+{
+    "train_py": "\"\"\"\nCore training and online-adaptation logic shared by *all* experimental\nvariants.  Contains a full implementation of ES-TENT (Entropy–Scaled\nTest–time Entropy Minimisation) together with utilities for model\nconfiguration and statistic collection.  Dataset- or model-specific\ncode **must NOT** be added here – use the placeholders in `preprocess.py`\nfor that.\n\"\"\"\nfrom __future__ import annotations\n\nimport math\nimport time\nfrom collections import defaultdict\nfrom typing import Any, Dict, List, Tuple\n\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nfrom torch.cuda.amp import GradScaler, autocast\n\n__all__ = [\n    \"softmax_entropy\",\n    \"collect_bn_affine_params\",\n    \"configure_model_for_tta\",\n    \"ESTentAdapter\",\n    \"train_and_adapt\",\n]\n\n\n# -------------------------------------------------------------\n#  Helper utilities\n# -------------------------------------------------------------\n\ndef softmax_entropy(logits: torch.Tensor) -> torch.Tensor:\n    \"\"\"Per-sample Shannon entropy of *unnormalised* network outputs.\"\"\"\n    probs = torch.softmax(logits, dim=1)\n    log_probs = torch.log(probs.add(1e-8))  # numerical stability\n    return -(probs * log_probs).sum(dim=1)\n\n\ndef collect_bn_affine_params(model: nn.Module) -> List[nn.Parameter]:\n    \"\"\"Return *only* the affine parameters (γ, β) of every BatchNorm layer.\"\"\"\n    params: List[nn.Parameter] = []\n    for m in model.modules():\n        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):\n            if m.weight is not None:\n                params.append(m.weight)\n            if m.bias is not None:\n                params.append(m.bias)\n    return params\n\n\ndef configure_model_for_tta(model: nn.Module) -> nn.Module:\n    \"\"\"Freeze all weights *except* BN affine parameters;  set model to train.\"\"\"\n    # Freeze everything first -------------------------------------------------\n    for p in model.parameters():\n        p.requires_grad_(False)\n\n    # Un-freeze BN affine -----------------------------------------------------\n    for m in model.modules():\n        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):\n            m.requires_grad_(True)\n            if m.weight is not None:\n                m.weight.requires_grad_(True)\n            if m.bias is not None:\n                m.bias.requires_grad_(True)\n    model.train()  # important: track running stats like TENT\n    return model\n\n\n# -------------------------------------------------------------\n#  ES-TENT adapter implementation\n# -------------------------------------------------------------\n\nclass ESTentAdapter(nn.Module):\n    \"\"\"Wrap a network with ES-TENT online-adaptation behaviour.\n\n    Parameters\n    ----------\n    model : torch.nn.Module\n        Backbone network *already configured* with BN affine params\n        unfrozen (use :func:`configure_model_for_tta`).\n    optimizer : torch.optim.Optimizer\n        Optimiser acting on BN affine parameters.\n    H_low, H_high : float\n        Hyper-parameters of entropy scaling (see paper).\n    episodic : bool, default False\n        If *True*, BN statistics are reset after every forward pass\n        (per-sample adaptation).  Not used in the presented experiments\n        but included for completeness.\n    use_amp : bool, default True\n        Enable automatic mixed precision.\n    device : str or torch.device, default \"cuda\"\n    \"\"\"\n\n    def __init__(\n        self,\n        model: nn.Module,\n        optimizer: torch.optim.Optimizer,\n        H_low: float,\n        H_high: float,\n        episodic: bool = False,\n        use_amp: bool = True,\n        device: str | torch.device = \"cuda\",\n    ) -> None:\n        super().__init__()\n        self.model = model\n        self.optimizer = optimizer\n        self.H_low: float = float(H_low)\n        self.H_high: float = float(H_high)\n        self.episodic = episodic\n        self.use_amp = use_amp and torch.cuda.is_available()\n        self.device = torch.device(device)\n\n        self.scaler: GradScaler | None = GradScaler(enabled=self.use_amp)\n        self._num_backward_steps: int = 0\n\n        self.to(self.device)\n\n    # ---------------------------------------------------------------------\n    #  Core forward & adapt\n    # ---------------------------------------------------------------------\n    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, float, float]:\n        if self.episodic:\n            self._reset_bn_stats()\n\n        with torch.set_grad_enabled(True):  # required for BN affine grads\n            if self.use_amp:\n                with autocast(dtype=torch.bfloat16):\n                    outputs = self.model(x)\n                    batch_entropy = softmax_entropy(outputs)\n                    mean_H = batch_entropy.mean()\n            else:\n                outputs = self.model(x)\n                batch_entropy = softmax_entropy(outputs)\n                mean_H = batch_entropy.mean()\n\n            # Scale factor --------------------------------------------------\n            s = torch.clamp(\n                (mean_H - self.H_low) / (self.H_high - self.H_low), min=0.0, max=1.0\n            )\n\n            if s.item() == 0.0:\n                # Confident batch – *skip* update\n                return outputs, 0.0, s.item()\n\n            # Scaled entropy loss -----------------------------------------\n            loss = s * mean_H\n            self.optimizer.zero_grad(set_to_none=True)\n\n            if self.use_amp:\n                assert self.scaler is not None  # mypy\n                self.scaler.scale(loss).backward()\n                self.scaler.step(self.optimizer)\n                self.scaler.update()\n            else:\n                loss.backward()\n                self.optimizer.step()\n\n            self._num_backward_steps += 1\n            return outputs, float(loss.detach().cpu()), s.item()\n\n    # ------------------------------------------------------------------\n    #  Introspection helpers\n    # ------------------------------------------------------------------\n    def num_backward_steps(self) -> int:\n        return self._num_backward_steps\n\n    # ------------------------------------------------------------------\n    #  Internal utilities\n    # ------------------------------------------------------------------\n    @staticmethod\n    def _reset_bn_stats(model: nn.Module) -> None:\n        \"\"\"Reset running mean/var of *all* BN layers (episodic mode).\"\"\"\n        for m in model.modules():\n            if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):\n                m.running_mean.zero_()\n                m.running_var.fill_(1.0)\n\n    def _reset_bn_stats(self):  # instance method wrapper\n        self._reset_bn_stats(self.model)\n\n\n# -------------------------------------------------------------\n#  Training / adaptation loop\n# -------------------------------------------------------------\n\ndef train_and_adapt(\n    adapter: ESTentAdapter,\n    loader: torch.utils.data.DataLoader,\n    device: torch.device | str = \"cuda\",\n    log_interval: int = 0,\n) -> Dict[str, Any]:\n    \"\"\"Iterate once over *loader*, adapting the model online.\n\n    Returns a dict with time-series of accuracy/loss as well as summary\n    statistics required by the common evaluation framework.\n    \"\"\"\n    device = torch.device(device)\n    adapter.to(device)\n    adapter.train()\n\n    t_start = time.time()\n    total, correct = 0, 0\n    metrics: Dict[str, List] = defaultdict(list)\n\n    for batch_idx, (inputs, targets) in enumerate(loader):\n        inputs = inputs.to(device, non_blocking=True)\n        targets = targets.to(device, non_blocking=True)\n\n        outputs, loss_value, s_value = adapter(inputs)\n        preds = outputs.argmax(dim=1)\n        total += targets.size(0)\n        correct += (preds == targets).sum().item()\n        acc = correct / total\n\n        # Store time-series ---------------------------------------------\n        metrics[\"batch_idx\"].append(batch_idx)\n        metrics[\"accuracy\"].append(acc)\n        metrics[\"loss\"].append(loss_value)\n        metrics[\"scale\"].append(s_value)\n\n        if log_interval and batch_idx % log_interval == 0:\n            print(\n                f\"[Batch {batch_idx:>5}]  acc={acc*100:6.2f}%  \"\n                f\"loss={loss_value:7.4f}  s={s_value:.2f}  \"\n                f\"steps={adapter.num_backward_steps()}\"\n            )\n\n    metrics[\"final_accuracy\"] = metrics[\"accuracy\"][-1] if metrics[\"accuracy\"] else 0.0\n    metrics[\"num_backward_steps\"] = adapter.num_backward_steps()\n    metrics[\"wall_clock_s\"] = time.time() - t_start\n\n    return dict(metrics)\n",
+    "evaluate_py": "\"\"\"\nUniversal evaluation and visualisation framework.\nEvery experiment—regardless of dataset or model—must use *exactly* these\nroutines to ensure results are directly comparable.\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport os\nfrom pathlib import Path\nfrom typing import Any, Dict, List\n\nimport matplotlib.pyplot as plt\nimport numpy as np\nimport seaborn as sns\nimport torch\nfrom sklearn.metrics import confusion_matrix\n\nFIG_DPI = 120  # not used for PDF, but keeps interactive windows light\nplt.rcParams.update({\"pdf.fonttype\": 42})  # TrueType fonts for LaTeX-quality\n\n__all__ = [\n    \"evaluate\",\n    \"generate_figures\",\n]\n\n\ndef evaluate(\n    model: torch.nn.Module,\n    loader: torch.utils.data.DataLoader,\n    device: str | torch.device = \"cuda\",\n) -> Dict[str, Any]:\n    \"\"\"Run a *pure* forward pass over ``loader`` and collect metrics.\"\"\"\n    model.eval()\n    device = torch.device(device)\n\n    preds_all: List[torch.Tensor] = []\n    labels_all: List[torch.Tensor] = []\n    with torch.no_grad():\n        for inputs, targets in loader:\n            inputs = inputs.to(device, non_blocking=True)\n            outputs = model(inputs)\n            preds_all.append(outputs.argmax(dim=1).cpu())\n            labels_all.append(targets.cpu())\n\n    preds = torch.cat(preds_all)\n    labels = torch.cat(labels_all)\n\n    acc = preds.eq(labels).float().mean().item()\n    cm = confusion_matrix(labels.numpy(), preds.numpy())\n\n    return {\n        \"accuracy\": acc,\n        \"confusion_matrix\": cm.tolist(),  # make JSON serialisable\n        \"num_samples\": int(labels.numel()),\n    }\n\n\n# -------------------------------------------------------------------------\n#  Figure utilities (PDF only!)\n# -------------------------------------------------------------------------\n\ndef _annotate_line(ax, x, y):\n    for xi, yi in zip(x, y):\n        ax.annotate(f\"{yi*100:.1f}\", (xi, yi), textcoords=\"offset points\", xytext=(0, -12), ha=\"center\")\n\n\ndef _annotate_bar(ax):\n    for p in ax.patches:\n        ax.annotate(\n            f\"{p.get_height():.2f}\",\n            (p.get_x() + p.get_width() / 2.0, p.get_height()),\n            ha=\"center\",\n            va=\"bottom\",\n            fontsize=9,\n        )\n\n\ndef generate_figures(\n    train_metrics: Dict[str, Any],\n    eval_metrics: Dict[str, Any],\n    output_dir: str | os.PathLike,\n) -> List[str]:\n    \"\"\"Create publication-quality PDF figures and return their filenames.\"\"\"\n    output_dir = Path(output_dir)\n    output_dir.mkdir(parents=True, exist_ok=True)\n    saved: List[str] = []\n\n    # -------------------------------------------------------------\n    #  1) Accuracy curve\n    # -------------------------------------------------------------\n    x = train_metrics[\"batch_idx\"]\n    y = train_metrics[\"accuracy\"]\n    fig, ax = plt.subplots(figsize=(6, 4), dpi=FIG_DPI)\n    ax.plot(x, y, marker=\"o\", linewidth=1.5, label=\"Train-stream acc\")\n    _annotate_line(ax, x, y)\n    ax.set_xlabel(\"Batch index\")\n    ax.set_ylabel(\"Accuracy\")\n    ax.set_title(\"Online accuracy during adaptation\")\n    ax.legend()\n    fname = \"accuracy.pdf\"\n    fig.tight_layout()\n    fig.savefig(output_dir / fname, bbox_inches=\"tight\")\n    saved.append(fname)\n    plt.close(fig)\n\n    # -------------------------------------------------------------\n    #  2) Loss curve\n    # -------------------------------------------------------------\n    x = train_metrics[\"batch_idx\"]\n    y = train_metrics[\"loss\"]\n    fig, ax = plt.subplots(figsize=(6, 4), dpi=FIG_DPI)\n    ax.plot(x, y, marker=\"s\", linewidth=1.5, color=\"#d62728\", label=\"Scaled entropy loss\")\n    ax.set_xlabel(\"Batch index\")\n    ax.set_ylabel(\"Loss\")\n    ax.set_title(\"Entropy loss during ES-TENT adaptation\")\n    _annotate_line(ax, x, y)\n    ax.legend()\n    fname = \"training_loss.pdf\"\n    fig.tight_layout()\n    fig.savefig(output_dir / fname, bbox_inches=\"tight\")\n    saved.append(fname)\n    plt.close(fig)\n\n    # -------------------------------------------------------------\n    #  3) Confusion matrix\n    # -------------------------------------------------------------\n    cm = np.asarray(eval_metrics[\"confusion_matrix\"])\n    fig, ax = plt.subplots(figsize=(5, 4), dpi=FIG_DPI)\n    sns.heatmap(cm, annot=True, fmt=\"d\", cmap=\"Blues\", cbar=False, ax=ax)\n    ax.set_title(\"Confusion matrix (eval set)\")\n    ax.set_xlabel(\"Predicted label\")\n    ax.set_ylabel(\"True label\")\n    fname = \"confusion_matrix.pdf\"\n    fig.tight_layout()\n    fig.savefig(output_dir / fname, bbox_inches=\"tight\")\n    saved.append(fname)\n    plt.close(fig)\n\n    return saved\n",
+    "preprocess_py": "\"\"\"\nCommon data-loading & preprocessing pipeline.  Everything that *depends*\non the concrete dataset is marked with explicit placeholders so that the\nnext phase can swap in real implementations without touching the core\nlogic.\n\"\"\"\nfrom __future__ import annotations\n\nimport random\nfrom pathlib import Path\nfrom typing import Dict, Tuple\n\nimport torch\nimport torchvision.transforms as T\nfrom torch.utils.data import DataLoader, Dataset\n\n__all__ = [\n    \"create_data_loaders\",\n]\n\n\n# -------------------------------------------------------------------------\n#  Synthetic fallback dataset (used for smoke tests)\n# -------------------------------------------------------------------------\nclass SyntheticDataset(Dataset):\n    \"\"\"A minimal random image dataset for quick smoke tests.\"\"\"\n\n    def __init__(\n        self,\n        num_samples: int = 1000,\n        num_classes: int = 10,\n        input_size: int = 32,\n        transform: T.Compose | None = None,\n        seed: int = 0,\n    ) -> None:\n        super().__init__()\n        rng = torch.Generator().manual_seed(seed)\n        self.data = torch.randn(num_samples, 3, input_size, input_size, generator=rng)\n        self.targets = torch.randint(0, num_classes, (num_samples,), generator=rng)\n        self.transform = transform\n\n    def __len__(self) -> int:  # type: ignore[override]\n        return self.data.size(0)\n\n    def __getitem__(self, idx):  # type: ignore[override]\n        x, y = self.data[idx], int(self.targets[idx])\n        if self.transform is not None:\n            x = self.transform(x)\n        return x, y\n\n\n# -------------------------------------------------------------------------\n#  Transform utilities\n# -------------------------------------------------------------------------\n\n_CIFAR_MEAN = (0.491, 0.482, 0.447)\n_CIFAR_STD = (0.247, 0.243, 0.262)\n\n_IMAGENET_MEAN = (0.485, 0.456, 0.406)\n_IMAGENET_STD = (0.229, 0.224, 0.225)\n\n\ndef _transforms_for(dataset_name: str) -> T.Compose:\n    ds = dataset_name.lower()\n    if \"cifar\" in ds:\n        return T.Compose([T.ConvertImageDtype(torch.float32), T.Normalize(_CIFAR_MEAN, _CIFAR_STD)])\n    if \"imagenet\" in ds:\n        return T.Compose(\n            [\n                T.Resize(256),\n                T.CenterCrop(224),\n                T.ConvertImageDtype(torch.float32),\n                T.Normalize(_IMAGENET_MEAN, _IMAGENET_STD),\n            ]\n        )\n    # Default: do nothing, images already float32\n    return T.Compose([])\n\n\n# -------------------------------------------------------------------------\n#  Data-loader factory (entry point)\n# -------------------------------------------------------------------------\n\ndef create_data_loaders(config: Dict) -> Tuple[DataLoader, DataLoader]:\n    \"\"\"Return (stream_loader, eval_loader) according to *config*.\n\n    The exact dataset implementation is left as a placeholder.  For the\n    smoke test we fall back to :class:`SyntheticDataset`.\n    \"\"\"\n\n    ds_name = config[\"dataset\"][\"name\"].lower()\n    batch_size = int(config[\"training\"][\"batch_size\"])\n    num_workers = int(config[\"training\"].get(\"num_workers\", 4))\n\n    transform = _transforms_for(ds_name)\n\n    if ds_name == \"synthetic\":\n        params = config[\"dataset\"].get(\"params\", {})\n        dataset = SyntheticDataset(transform=transform, **params)\n        # Use the *same* dataset for streaming & evaluation to keep the\n        # smoke test super light-weight.\n        stream_ds = dataset\n        eval_ds = dataset\n\n    else:\n        # ----------------------------------------------------------------\n        #  PLACEHOLDER: Will be replaced with specific dataset loading\n        #  logic in subsequent experimental variants.\n        # ----------------------------------------------------------------\n        raise NotImplementedError(\n            \"Dataset '{}' not implemented in common foundation. \"\n            \"Replace this placeholder with real loading logic.\"\n            .format(config[\"dataset\"][\"name\"])\n        )\n\n    stream_loader = DataLoader(\n        stream_ds,\n        batch_size=batch_size,\n        shuffle=False,  # *never* shuffle – online TTA requires stream order\n        num_workers=num_workers,\n        pin_memory=torch.cuda.is_available(),\n    )\n\n    eval_loader = DataLoader(\n        eval_ds,\n        batch_size=batch_size,\n        shuffle=False,\n        num_workers=num_workers,\n        pin_memory=torch.cuda.is_available(),\n    )\n\n    return stream_loader, eval_loader\n",
+    "main_py": "\"\"\"\nMain entry-point for **all** experiments.  Provides a CLI compatible with:\n\n    uv run python -m src.main --smoke-test\n    uv run python -m src.main --full-experiment\n\nAt its core the script\n1. Loads a YAML configuration.\n2. Constructs dataset, model, optimiser & ES-TENT adapter.\n3. Runs the adaptation stream.\n4. Evaluates the adapted model.\n5. Generates figures & a JSON result file.\n6. Prints an experiment description and the JSON content to STDOUT.\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport json\nimport os\nimport sys\nimport time\nfrom datetime import datetime\nfrom pathlib import Path\nfrom typing import Dict\n\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport yaml\n\n# Local imports (namespace-package friendly)\nfrom src import evaluate as evaluate_module\nfrom src import preprocess as preprocess_module\nfrom src import train as train_module\n\n\n# -------------------------------------------------------------------------\n#  Model factory (dataset/model-agnostic apart from placeholder rules)\n# -------------------------------------------------------------------------\n\ndef _create_model(model_cfg: Dict, num_classes: int) -> nn.Module:\n    name = model_cfg[\"name\"].lower()\n    if name == \"synthetic_cnn\":\n        # Tiny CNN (≈ 25k params) – used only for smoke tests.\n        return nn.Sequential(\n            nn.Conv2d(3, 32, 3, padding=1),\n            nn.BatchNorm2d(32),\n            nn.ReLU(inplace=True),\n            nn.AdaptiveAvgPool2d(1),\n            nn.Flatten(),\n            nn.Linear(32, num_classes),\n        )\n\n    try:\n        import torchvision.models as tvm\n\n        if hasattr(tvm, name):\n            model_fn = getattr(tvm, name)\n            model: nn.Module = model_fn(pretrained=model_cfg.get(\"pretrained\", True))\n            # Replace classifier head if num_classes differs ----------------\n            if name.startswith(\"resnet\"):\n                if model.fc.out_features != num_classes:\n                    model.fc = nn.Linear(model.fc.in_features, num_classes)\n            elif name.startswith(\"vit\"):\n                if model.heads.head.out_features != num_classes:  # type: ignore[attr-defined]\n                    model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)  # type: ignore[attr-defined]\n            # Other architectures can be added here.\n            return model\n    except Exception as e:  # pragma: no cover – best-effort fallback\n        print(\"[WARN] torchvision not available – falling back to tiny CNN\", file=sys.stderr)\n        return _create_model({\"name\": \"synthetic_cnn\"}, num_classes)\n\n    # --------------------------------------------------------------------\n    #  PLACEHOLDER: Add additional model backbones here (e.g. ViT-B/16-BN).\n    # --------------------------------------------------------------------\n    raise NotImplementedError(f\"Model '{name}' is not supported in the foundation code.\")\n\n\n# -------------------------------------------------------------------------\n#  CLI utilities\n# -------------------------------------------------------------------------\n\ndef _parse_args():\n    parser = argparse.ArgumentParser(\"Common experimental foundation (ES-TENT)\")\n    group = parser.add_mutually_exclusive_group(required=True)\n    group.add_argument(\"--smoke-test\", action=\"store_true\", help=\"Run a minimal synthetic dataset test.\")\n    group.add_argument(\"--full-experiment\", action=\"store_true\", help=\"Run the full experiment as specified in config.\")\n    parser.add_argument(\"--config\", type=str, default=None, help=\"Optional custom config path (overrides preset).\")\n    return parser.parse_args()\n\n\n# -------------------------------------------------------------------------\n#  Experiment driver\n# -------------------------------------------------------------------------\n\ndef main():  # noqa: C901 – single entry-point is fine\n    args = _parse_args()\n\n    # ------------------------------------------------------------------\n    #  Configuration ----------------------------------------------------\n    # ------------------------------------------------------------------\n    if args.config is not None:\n        cfg_path = Path(args.config)\n    elif args.smoke_test:\n        cfg_path = Path(__file__).resolve().parent.parent / \"config\" / \"smoke_test.yaml\"\n    else:  # full-experiment\n        cfg_path = Path(__file__).resolve().parent.parent / \"config\" / \"full_experiment.yaml\"\n\n    with open(cfg_path, \"r\", encoding=\"utf-8\") as f:\n        cfg: Dict = yaml.safe_load(f)\n\n    # ------------------------------------------------------------------\n    #  Reproducibility --------------------------------------------------\n    # ------------------------------------------------------------------\n    seed = int(cfg.get(\"seed\", 0))\n    torch.manual_seed(seed)\n    random = __import__(\"random\")\n    random.seed(seed)\n    if torch.cuda.is_available():\n        torch.cuda.manual_seed_all(seed)\n        torch.backends.cudnn.deterministic = False\n        torch.backends.cudnn.benchmark = True  # perf boost\n\n    device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n\n    # ------------------------------------------------------------------\n    #  Data loaders -----------------------------------------------------\n    # ------------------------------------------------------------------\n    stream_loader, eval_loader = preprocess_module.create_data_loaders(cfg)\n\n    num_classes = int(cfg[\"dataset\"].get(\"params\", {}).get(\"num_classes\", 10))\n\n    # ------------------------------------------------------------------\n    #  Model & optimiser ------------------------------------------------\n    # ------------------------------------------------------------------\n    model = _create_model(cfg[\"model\"], num_classes=num_classes).to(device)\n    model = train_module.configure_model_for_tta(model)\n\n    optim_cfg = cfg[\"optimizer\"]\n    params = train_module.collect_bn_affine_params(model)\n    optimizer = optim.SGD(params, lr=optim_cfg[\"lr\"], momentum=optim_cfg[\"momentum\"], weight_decay=0.0)\n\n    # ------------------------------------------------------------------\n    #  ES-TENT adapter --------------------------------------------------\n    # ------------------------------------------------------------------\n    H_low = float(cfg[\"adaptation\"][\"H_low_coeff\"]) * math.log(num_classes)\n    H_high = float(cfg[\"adaptation\"][\"H_high_factor\"]) * math.log(num_classes)\n    adapter = train_module.ESTentAdapter(\n        model=model,\n        optimizer=optimizer,\n        H_low=H_low,\n        H_high=H_high,\n        episodic=cfg[\"adaptation\"].get(\"episodic\", False),\n        use_amp=cfg.get(\"mixed_precision\", True),\n        device=device,\n    )\n\n    # ------------------------------------------------------------------\n    #  Adaptation loop --------------------------------------------------\n    # ------------------------------------------------------------------\n    train_metrics = train_module.train_and_adapt(\n        adapter=adapter,\n        loader=stream_loader,\n        device=device,\n        log_interval=cfg[\"logging\"].get(\"log_interval\", 0),\n    )\n\n    # ------------------------------------------------------------------\n    #  Final evaluation -------------------------------------------------\n    # ------------------------------------------------------------------\n    eval_metrics = evaluate_module.evaluate(model, eval_loader, device=device)\n\n    # ------------------------------------------------------------------\n    #  Figures & output -------------------------------------------------\n    # ------------------------------------------------------------------\n    timestamp = datetime.utcnow().strftime(\"%Y%m%d_%H%M%S\")\n    out_dir = Path(cfg.get(\"output_dir\", \"results\")) / timestamp\n    out_dir.mkdir(parents=True, exist_ok=True)\n\n    figures = evaluate_module.generate_figures(train_metrics, eval_metrics, out_dir)\n\n    # Result JSON -------------------------------------------------------\n    result = {\n        \"experiment_id\": timestamp,\n        \"dataset\": cfg[\"dataset\"],\n        \"model\": cfg[\"model\"],\n        \"adaptation\": cfg[\"adaptation\"],\n        \"train_metrics\": train_metrics,\n        \"eval_metrics\": eval_metrics,\n        \"figures\": figures,\n    }\n\n    json_path = out_dir / \"results.json\"\n    with open(json_path, \"w\", encoding=\"utf-8\") as f:\n        json.dump(result, f, indent=2)\n\n    # ------------------------------------------------------------------\n    #  STDOUT – description + numeric data -----------------------------\n    # ------------------------------------------------------------------\n    description = (\n        f\"\\n=== EXPERIMENT DESCRIPTION ===\\n\"\n        f\"Dataset : {cfg['dataset']['name']}\\n\"\n        f\"Model   : {cfg['model']['name']}\\n\"\n        f\"Method  : ES-TENT (Entropy-Scaled Test-time Entropy Minimisation)\\n\"\n        f\"Samples : {train_metrics.get('batch_idx', [-1])[-1] + 1 if train_metrics.get('batch_idx') else 0}\\n\"\n        f\"==============================\\n\"\n    )\n    print(description)\n    print(json.dumps(result, indent=2))\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "pyproject_toml": "[build-system]\nrequires = [\"setuptools\", \"wheel\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"es-tent-experiments\"\nversion = \"0.1.0\"\ndescription = \"Common core foundation for ES-TENT experimental variations\"\nrequires-python = \">=3.10\"\nlicense = {text = \"MIT\"}\nauthors = [\n    { name=\"Research Automation\", email=\"noreply@example.com\" }\n]\nkeywords = [\"test-time adaptation\", \"entropy minimisation\", \"deep learning\", \"pytorch\"]\n\n[project.dependencies]\ntorch = \">=2.0.0\"\ntorchvision = \">=0.15.0\"\nPyYAML = \"^6.0\"\nmatplotlib = \"^3.7\"\nseaborn = \"^0.13\"\nscikit-learn = \"^1.3\"\nnumpy = \"^1.24\"\ntqdm = \"^4.65\"\n",
+    "smoke_test_yaml": "# ------------------------------------------------------------------\n#  Minimal configuration to validate that the *core foundation* works\n#  end-to-end in < 10 seconds on CPU-only machines.\n# ------------------------------------------------------------------\n\nseed: 0\noutput_dir: \"results\"\n\n# ------------------------- DATA -----------------------------------\ndataset:\n  name: \"synthetic\"\n  params:\n    num_samples: 1000    # tiny dataset for speed\n    num_classes: 10\n    input_size: 32\n\n# ------------------------- MODEL ----------------------------------\nmodel:\n  name: \"synthetic_cnn\"   # super-light CNN defined in main.py\n  pretrained: false\n\n# ------------------------- TRAINING -------------------------------\ntraining:\n  batch_size: 64\n  num_workers: 0\n\n# ------------------------- OPTIMISER ------------------------------\noptimizer:\n  lr: 0.001\n  momentum: 0.9\n\n# ------------------------- ADAPTATION -----------------------------\nadaptation:\n  H_low_coeff: 0.5        # H_low  = 0.5·log C\n  H_high_factor: 1.0      # H_high = 1.0·log C\n  episodic: false\n\n# ------------------------- LOGGING --------------------------------\nlogging:\n  log_interval: 0  # 0 = no per-batch logging\n\nmixed_precision: false\n",
+    "full_experiment_yaml": "# ------------------------------------------------------------------\n#  Base template for *real* experiments.  DATASET/MODEL placeholders\n#  must be replaced in the specialised configurations that inherit from\n#  this one.  Do *not* change field names – the core code expects them.\n# ------------------------------------------------------------------\n\nseed: 0\noutput_dir: \"results\"\n\n# ------------------------- DATA -----------------------------------\ndataset:\n  name: \"DATASET_PLACEHOLDER\"   # PLACEHOLDER: e.g. \"CIFAR10-C\" or \"ImageNet-C\"\n  params:\n    data_root: \"/path/to/dataset\"             # PLACEHOLDER: dataset location\n    num_classes: 10                            # Must match actual dataset\n    # Additional dataset-specific fields can be inserted here.\n\n# ------------------------- MODEL ----------------------------------\nmodel:\n  name: \"MODEL_PLACEHOLDER\"     # PLACEHOLDER: e.g. \"resnet50\" or \"vit_base_patch16_224_bn\"\n  pretrained: true\n\n# ------------------------- TRAINING -------------------------------\ntraining:\n  batch_size: 64\n  num_workers: 8\n\n# ------------------------- OPTIMISER ------------------------------\noptimizer:\n  lr: 0.001\n  momentum: 0.9\n\n# ------------------------- ADAPTATION -----------------------------\nadaptation:\n  H_low_coeff: 0.5        # H_low  = 0.5·log C\n  H_high_factor: 1.0      # H_high = 1.0·log C\n  episodic: false\n\n# ------------------------- LOGGING --------------------------------\nlogging:\n  log_interval: 10        # print every 10 batches\n\nmixed_precision: true\n\n# ------------------------------------------------------------------\n#  End of template – replace placeholders in child configs.\n# ------------------------------------------------------------------\n"
+}
