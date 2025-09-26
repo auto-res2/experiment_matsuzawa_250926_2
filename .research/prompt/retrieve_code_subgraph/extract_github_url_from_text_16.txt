@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+PRD utilizes a neural network comprising an encoder (f) for feature extraction and a projection head (g) for mapping features to a latent space. The training objective is a combination of three main losses: 1. Supervised Contrastive Loss (LSC): Applied to incoming task data to learn robust representations by maximizing similarity within positive pairs and contrasting with negative pairs. 2. Prototype Learning without Contrasts (Lp): For each class, a prototype is initialized and optimized to represent its samples by maximizing similarity with their representations, using a stop-gradient operation to isolate this learning from representation updates and old prototypes. This loss is designed to be contrast-free to avoid interfering with previously learned classes. 3. Prototypes-Samples Similarity Distillation (Ld): A key novel component that minimizes the KL divergence between the softmax similarity distributions of past task prototypes to samples in the current mini-batch, comparing distributions from the previous and current model states. This ensures that the relative relationships between prototypes and samples are maintained, keeping older prototypes relevant.
+
+# GitHub URLs List
+['https://github.com/naderAsadi/CLHive']
+Output:
+{
+    "index": 0
+}
