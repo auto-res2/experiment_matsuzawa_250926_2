@@ -1,1 +1,23 @@
-# Please list the required python packages.
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pmr_proto_core"
+version = "0.1.0"
+description = "PMR-Proto experiments with miniImageNet and real backbones"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[project.dependencies]
+torch = ">=2.0"
+torchvision = ">=0.15"
+pyyaml = "*"
+numpy = "*"
+matplotlib = "*"
+seaborn = "*"
+scikit-learn = "*"
+scipy = "*"
+tqdm = "*"
+datasets = "*"            # <-- new: Hugging Face datasets loader
+timm = "*"                # <-- new: for ConvNeXt backbone

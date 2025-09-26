@@ -1,0 +1,56 @@
+# config/full_experiment.yaml
+# Fully specified configuration for Experiment-1 on miniImageNet with ResNet-12
+
+# ------------------------------------------------------
+# DATASET
+# ------------------------------------------------------
+dataset:
+  name: miniImageNet          # HuggingFace ID: GATE-engine/mini_imagenet
+  input_shape: [3, 84, 84]
+  num_workers: 8              # data-loading workers
+
+# ------------------------------------------------------
+# MODEL / BACKBONE
+# ------------------------------------------------------
+model:
+  name: RESNET12              # implemented in src.train.get_backbone
+  in_channels: 3
+  embedding_dim: 640          # output dim of ResNet-12
+
+# ------------------------------------------------------
+# ALGORITHM (PMR-Proto hyper-params)
+# ------------------------------------------------------
+algo:
+  way: 5
+  shot: 1
+  query: 15
+  tau: 0.2
+  lambda: 0.1
+  gamma: 0.01
+  temperature: 10.0
+  grad_clip: 1.0
+
+# ------------------------------------------------------
+# TRAINING
+# ------------------------------------------------------
+training:
+  epochs: 90                  # cosine schedule length
+  episodes_per_epoch: 750     # ≈ 60,000 episodes overall
+  batch_size: 1               # 1 episode / batch (each episode already large)
+  lr: 0.05
+  lr_scheduler: cosine
+  weight_decay: 5e-4
+  checkpoint_dir: checkpoints
+  seed: 12
+  device: cuda
+
+# ------------------------------------------------------
+# EVALUATION
+# ------------------------------------------------------
+evaluation:
+  episodes: 600
+  batch_size: 1
+  confidence_level: 0.95
+  results_dir: results
+
+# End of file
