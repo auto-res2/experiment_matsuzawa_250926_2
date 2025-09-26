@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology revolves around two core strategies. First, a learnable consistency loss (Lwcont) is introduced for the TTT task. Instead of a heuristically defined objective, Lwcont employs a weight subnetwork (fw) to measure consistency between representations (z, z') from a feature extractor and its augmented version. The parameters of fw are updated by enforcing alignment between the normalized gradients of Lwcont and the main classification loss (Lmain) with respect to the feature extractor. Second, during the test-time adaptation phase, additional adaptive parameter blocks (fΘ) are inserted after each block of the pretrained feature extractor. Only these newly introduced adaptive parameters (fΘ) are updated using the learned consistency loss, while the original model parameters remain fixed. This online updating strategy adapts the model to unseen target domains.
+
+# GitHub URLs List
+['https://github.com/liangchen527/ITTA']
+Output:
+{
+    "index": 0
+}
