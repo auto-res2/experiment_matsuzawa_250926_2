@@ -78,7 +78,7 @@ def train_model(
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=patience // 2, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=patience // 2)
 
     history: Dict[str, List] = {
         "train_loss": [],

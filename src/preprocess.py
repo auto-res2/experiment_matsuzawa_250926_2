@@ -12,7 +12,7 @@ from typing import Dict, Tuple
 
 import torch
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
+from torchvision import transforms, datasets
 
 __all__ = [
     "get_dataloaders",
@@ -62,6 +62,41 @@ def get_dataloaders(config: Dict) -> Tuple[DataLoader, DataLoader, DataLoader, i
             generator=torch.Generator().manual_seed(seed),
         )
         num_classes = 10
+    elif name == "cifar10":
+        # CIFAR-10 standard transforms
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+        # Download CIFAR-10 dataset
+        train_full = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+        test_ds = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+
+        # Split training set into train and validation
+        n_train = len(train_full)
+        n_val = int(0.1 * n_train)  # 10% for validation
+        n_train_actual = n_train - n_val
+
+        train_ds, val_ds = torch.utils.data.random_split(
+            train_full,
+            [n_train_actual, n_val],
+            generator=torch.Generator().manual_seed(seed)
+        )
+
+        # Create a separate validation dataset with test transforms
+        val_data = datasets.CIFAR10(root='./data', train=True, download=False, transform=transform_test)
+        # Get the same indices as val_ds but with test transforms
+        val_ds = torch.utils.data.Subset(val_data, val_ds.indices)
+
+        num_classes = 10
     else:
         # --------------------------------------------------------------
         # PLACEHOLDER: Will be replaced with specific dataset loading logic.
@@ -70,8 +105,10 @@ def get_dataloaders(config: Dict) -> Tuple[DataLoader, DataLoader, DataLoader, i
             f"Dataset '{name}' not yet implemented in the common foundation."
         )
 
-    # Basic normalisation transform (identity for synthetic data)
-    transform = transforms.Compose([transforms.ToTensor()])
+    # Transform is already applied to CIFAR-10, only needed for synthetic
+    if name == "synthetic":
+        # Basic normalisation transform for synthetic data
+        transform = transforms.Compose([transforms.ToTensor()])
 
     def _dl(ds):
         return DataLoader(

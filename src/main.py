@@ -54,6 +54,14 @@ def _build_model(config: Dict, num_classes: int) -> nn.Module:
 
         return SimpleNet(num_classes)
 
+    elif name == "resnet18":
+        import torchvision.models as models
+        import torch.nn as nn
+        model = models.resnet18(pretrained=False)
+        # Replace the final fully connected layer for CIFAR-10 classes
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+        return model
+
     # ------------------------------------------------------------------
     # PLACEHOLDER: Will be replaced by task-specific model constructor.
     # ------------------------------------------------------------------
