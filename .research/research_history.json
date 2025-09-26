@@ -624,7 +624,568 @@
         "IMDB Reviews",
         "GLUE MNLI",
         "HANS"
-      ]
+      ],
+      "external_resources": {
+        "hugging_face": {
+          "models": [
+            {
+              "id": "timm/resnet18.tv_in1k",
+              "author": "timm",
+              "sha": "bbd144b3e5565108aad885f145491d11bc6ce807",
+              "created_at": "2023-04-05T18:04:15+00:00",
+              "last_modified": "2025-01-21T21:39:10+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 29683,
+              "likes": 0,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "model.safetensors"
+                },
+                {
+                  "rfilename": "pytorch_model.bin"
+                }
+              ],
+              "card_data": {
+                "license": "bsd-3-clause",
+                "language": [],
+                "library_name": "timm",
+                "tags": [
+                  "image-classification",
+                  "timm",
+                  "transformers"
+                ],
+                "datasets": [],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "timm",
+                "pytorch",
+                "safetensors",
+                "image-classification",
+                "transformers",
+                "arxiv:1512.03385",
+                "license:bsd-3-clause",
+                "region:us"
+              ],
+              "pipeline_tag": "image-classification",
+              "library_name": "timm",
+              "readme": "---\nlicense: bsd-3-clause\nlibrary_name: timm\ntags:\n- image-classification\n- timm\n- transformers\n---\n# Model card for resnet18.tv_in1k\n\nA ResNet-B image classification model.\n\nThis model features:\n * ReLU activations\n * single layer 7x7 convolution with pooling\n * 1x1 convolution shortcut downsample\n\nTrained on ImageNet-1k, original torchvision model weight.\n\n\n## Model Details\n- **Model Type:** Image classification / feature backbone\n- **Model Stats:**\n  - Params (M): 11.7\n  - GMACs: 1.8\n  - Activations (M): 2.5\n  - Image size: 224 x 224\n- **Papers:**\n  - Deep Residual Learning for Image Recognition: https://arxiv.org/abs/1512.03385\n- **Original:** https://github.com/pytorch/vision\n\n## Model Usage\n### Image Classification\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model('resnet18.tv_in1k', pretrained=True)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\ntop5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)\n```\n\n### Feature Map Extraction\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'resnet18.tv_in1k',\n    pretrained=True,\n    features_only=True,\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\nfor o in output:\n    # print shape of each feature map in output\n    # e.g.:\n    #  torch.Size([1, 64, 112, 112])\n    #  torch.Size([1, 64, 56, 56])\n    #  torch.Size([1, 128, 28, 28])\n    #  torch.Size([1, 256, 14, 14])\n    #  torch.Size([1, 512, 7, 7])\n\n    print(o.shape)\n```\n\n### Image Embeddings\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'resnet18.tv_in1k',\n    pretrained=True,\n    num_classes=0,  # remove classifier nn.Linear\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor\n\n# or equivalently (without needing to set num_classes=0)\n\noutput = model.forward_features(transforms(img).unsqueeze(0))\n# output is unpooled, a (1, 512, 7, 7) shaped tensor\n\noutput = model.forward_head(output, pre_logits=True)\n# output is a (1, num_features) shaped tensor\n```\n\n## Model Comparison\nExplore the dataset and runtime metrics of this model in timm [model results](https://github.com/huggingface/pytorch-image-models/tree/main/results).\n\n|model                                     |img_size|top1 |top5 |param_count|gmacs|macts|img/sec|\n|------------------------------------------|--------|-----|-----|-----------|-----|-----|-------|\n|[seresnextaa101d_32x8d.sw_in12k_ft_in1k_288](https://huggingface.co/timm/seresnextaa101d_32x8d.sw_in12k_ft_in1k_288)|320     |86.72|98.17|93.6       |35.2 |69.7 |451    |\n|[seresnextaa101d_32x8d.sw_in12k_ft_in1k_288](https://huggingface.co/timm/seresnextaa101d_32x8d.sw_in12k_ft_in1k_288)|288     |86.51|98.08|93.6       |28.5 |56.4 |560    |\n|[seresnextaa101d_32x8d.sw_in12k_ft_in1k](https://huggingface.co/timm/seresnextaa101d_32x8d.sw_in12k_ft_in1k)|288     |86.49|98.03|93.6       |28.5 |56.4 |557    |\n|[seresnextaa101d_32x8d.sw_in12k_ft_in1k](https://huggingface.co/timm/seresnextaa101d_32x8d.sw_in12k_ft_in1k)|224     |85.96|97.82|93.6       |17.2 |34.2 |923    |\n|[resnext101_32x32d.fb_wsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext101_32x32d.fb_wsl_ig1b_ft_in1k)|224     |85.11|97.44|468.5      |87.3 |91.1 |254    |\n|[resnetrs420.tf_in1k](https://huggingface.co/timm/resnetrs420.tf_in1k)|416     |85.0 |97.12|191.9      |108.4|213.8|134    |\n|[ecaresnet269d.ra2_in1k](https://huggingface.co/timm/ecaresnet269d.ra2_in1k)|352     |84.96|97.22|102.1      |50.2 |101.2|291    |\n|[ecaresnet269d.ra2_in1k](https://huggingface.co/timm/ecaresnet269d.ra2_in1k)|320     |84.73|97.18|102.1      |41.5 |83.7 |353    |\n|[resnetrs350.tf_in1k](https://huggingface.co/timm/resnetrs350.tf_in1k)|384     |84.71|96.99|164.0      |77.6 |154.7|183    |\n|[seresnextaa101d_32x8d.ah_in1k](https://huggingface.co/timm/seresnextaa101d_32x8d.ah_in1k)|288     |84.57|97.08|93.6       |28.5 |56.4 |557    |\n|[resnetrs200.tf_in1k](https://huggingface.co/timm/resnetrs200.tf_in1k)|320     |84.45|97.08|93.2       |31.5 |67.8 |446    |\n|[resnetrs270.tf_in1k](https://huggingface.co/timm/resnetrs270.tf_in1k)|352     |84.43|96.97|129.9      |51.1 |105.5|280    |\n|[seresnext101d_32x8d.ah_in1k](https://huggingface.co/timm/seresnext101d_32x8d.ah_in1k)|288     |84.36|96.92|93.6       |27.6 |53.0 |595    |\n|[seresnet152d.ra2_in1k](https://huggingface.co/timm/seresnet152d.ra2_in1k)|320     |84.35|97.04|66.8       |24.1 |47.7 |610    |\n|[resnetrs350.tf_in1k](https://huggingface.co/timm/resnetrs350.tf_in1k)|288     |84.3 |96.94|164.0      |43.7 |87.1 |333    |\n|[resnext101_32x8d.fb_swsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext101_32x8d.fb_swsl_ig1b_ft_in1k)|224     |84.28|97.17|88.8       |16.5 |31.2 |1100   |\n|[resnetrs420.tf_in1k](https://huggingface.co/timm/resnetrs420.tf_in1k)|320     |84.24|96.86|191.9      |64.2 |126.6|228    |\n|[seresnext101_32x8d.ah_in1k](https://huggingface.co/timm/seresnext101_32x8d.ah_in1k)|288     |84.19|96.87|93.6       |27.2 |51.6 |613    |\n|[resnext101_32x16d.fb_wsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext101_32x16d.fb_wsl_ig1b_ft_in1k)|224     |84.18|97.19|194.0      |36.3 |51.2 |581    |\n|[resnetaa101d.sw_in12k_ft_in1k](https://huggingface.co/timm/resnetaa101d.sw_in12k_ft_in1k)|288     |84.11|97.11|44.6       |15.1 |29.0 |1144   |\n|[resnet200d.ra2_in1k](https://huggingface.co/timm/resnet200d.ra2_in1k)|320     |83.97|96.82|64.7       |31.2 |67.3 |518    |\n|[resnetrs200.tf_in1k](https://huggingface.co/timm/resnetrs200.tf_in1k)|256     |83.87|96.75|93.2       |20.2 |43.4 |692    |\n|[seresnextaa101d_32x8d.ah_in1k](https://huggingface.co/timm/seresnextaa101d_32x8d.ah_in1k)|224     |83.86|96.65|93.6       |17.2 |34.2 |923    |\n|[resnetrs152.tf_in1k](https://huggingface.co/timm/resnetrs152.tf_in1k)|320     |83.72|96.61|86.6       |24.3 |48.1 |617    |\n|[seresnet152d.ra2_in1k](https://huggingface.co/timm/seresnet152d.ra2_in1k)|256     |83.69|96.78|66.8       |15.4 |30.6 |943    |\n|[seresnext101d_32x8d.ah_in1k](https://huggingface.co/timm/seresnext101d_32x8d.ah_in1k)|224     |83.68|96.61|93.6       |16.7 |32.0 |986    |\n|[resnet152d.ra2_in1k](https://huggingface.co/timm/resnet152d.ra2_in1k)|320     |83.67|96.74|60.2       |24.1 |47.7 |706    |\n|[resnetrs270.tf_in1k](https://huggingface.co/timm/resnetrs270.tf_in1k)|256     |83.59|96.61|129.9      |27.1 |55.8 |526    |\n|[seresnext101_32x8d.ah_in1k](https://huggingface.co/timm/seresnext101_32x8d.ah_in1k)|224     |83.58|96.4 |93.6       |16.5 |31.2 |1013   |\n|[resnetaa101d.sw_in12k_ft_in1k](https://huggingface.co/timm/resnetaa101d.sw_in12k_ft_in1k)|224     |83.54|96.83|44.6       |9.1  |17.6 |1864   |\n|[resnet152.a1h_in1k](https://huggingface.co/timm/resnet152.a1h_in1k)|288     |83.46|96.54|60.2       |19.1 |37.3 |904    |\n|[resnext101_32x16d.fb_swsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext101_32x16d.fb_swsl_ig1b_ft_in1k)|224     |83.35|96.85|194.0      |36.3 |51.2 |582    |\n|[resnet200d.ra2_in1k](https://huggingface.co/timm/resnet200d.ra2_in1k)|256     |83.23|96.53|64.7       |20.0 |43.1 |809    |\n|[resnext101_32x4d.fb_swsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext101_32x4d.fb_swsl_ig1b_ft_in1k)|224     |83.22|96.75|44.2       |8.0  |21.2 |1814   |\n|[resnext101_64x4d.c1_in1k](https://huggingface.co/timm/resnext101_64x4d.c1_in1k)|288     |83.16|96.38|83.5       |25.7 |51.6 |590    |\n|[resnet152d.ra2_in1k](https://huggingface.co/timm/resnet152d.ra2_in1k)|256     |83.14|96.38|60.2       |15.4 |30.5 |1096   |\n|[resnet101d.ra2_in1k](https://huggingface.co/timm/resnet101d.ra2_in1k)|320     |83.02|96.45|44.6       |16.5 |34.8 |992    |\n|[ecaresnet101d.miil_in1k](https://huggingface.co/timm/ecaresnet101d.miil_in1k)|288     |82.98|96.54|44.6       |13.4 |28.2 |1077   |\n|[resnext101_64x4d.tv_in1k](https://huggingface.co/timm/resnext101_64x4d.tv_in1k)|224     |82.98|96.25|83.5       |15.5 |31.2 |989    |\n|[resnetrs152.tf_in1k](https://huggingface.co/timm/resnetrs152.tf_in1k)|256     |82.86|96.28|86.6       |15.6 |30.8 |951    |\n|[resnext101_32x8d.tv2_in1k](https://huggingface.co/timm/resnext101_32x8d.tv2_in1k)|224     |82.83|96.22|88.8       |16.5 |31.2 |1099   |\n|[resnet152.a1h_in1k](https://huggingface.co/timm/resnet152.a1h_in1k)|224     |82.8 |96.13|60.2       |11.6 |22.6 |1486   |\n|[resnet101.a1h_in1k](https://huggingface.co/timm/resnet101.a1h_in1k)|288     |82.8 |96.32|44.6       |13.0 |26.8 |1291   |\n|[resnet152.a1_in1k](https://huggingface.co/timm/resnet152.a1_in1k)|288     |82.74|95.71|60.2       |19.1 |37.3 |905    |\n|[resnext101_32x8d.fb_wsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext101_32x8d.fb_wsl_ig1b_ft_in1k)|224     |82.69|96.63|88.8       |16.5 |31.2 |1100   |\n|[resnet152.a2_in1k](https://huggingface.co/timm/resnet152.a2_in1k)|288     |82.62|95.75|60.2       |19.1 |37.3 |904    |\n|[resnetaa50d.sw_in12k_ft_in1k](https://huggingface.co/timm/resnetaa50d.sw_in12k_ft_in1k)|288     |82.61|96.49|25.6       |8.9  |20.6 |1729   |\n|[resnet61q.ra2_in1k](https://huggingface.co/timm/resnet61q.ra2_in1k)|288     |82.53|96.13|36.8       |9.9  |21.5 |1773   |\n|[wide_resnet101_2.tv2_in1k](https://huggingface.co/timm/wide_resnet101_2.tv2_in1k)|224     |82.5 |96.02|126.9      |22.8 |21.2 |1078   |\n|[resnext101_64x4d.c1_in1k](https://huggingface.co/timm/resnext101_64x4d.c1_in1k)|224     |82.46|95.92|83.5       |15.5 |31.2 |987    |\n|[resnet51q.ra2_in1k](https://huggingface.co/timm/resnet51q.ra2_in1k)|288     |82.36|96.18|35.7       |8.1  |20.9 |1964   |\n|[ecaresnet50t.ra2_in1k](https://huggingface.co/timm/ecaresnet50t.ra2_in1k)|320     |82.35|96.14|25.6       |8.8  |24.1 |1386   |\n|[resnet101.a1_in1k](https://huggingface.co/timm/resnet101.a1_in1k)|288     |82.31|95.63|44.6       |13.0 |26.8 |1291   |\n|[resnetrs101.tf_in1k](https://huggingface.co/timm/resnetrs101.tf_in1k)|288     |82.29|96.01|63.6       |13.6 |28.5 |1078   |\n|[resnet152.tv2_in1k](https://huggingface.co/timm/resnet152.tv2_in1k)|224     |82.29|96.0 |60.2       |11.6 |22.6 |1484   |\n|[wide_resnet50_2.racm_in1k](https://huggingface.co/timm/wide_resnet50_2.racm_in1k)|288     |82.27|96.06|68.9       |18.9 |23.8 |1176   |\n|[resnet101d.ra2_in1k](https://huggingface.co/timm/resnet101d.ra2_in1k)|256     |82.26|96.07|44.6       |10.6 |22.2 |1542   |\n|[resnet101.a2_in1k](https://huggingface.co/timm/resnet101.a2_in1k)|288     |82.24|95.73|44.6       |13.0 |26.8 |1290   |\n|[seresnext50_32x4d.racm_in1k](https://huggingface.co/timm/seresnext50_32x4d.racm_in1k)|288     |82.2 |96.14|27.6       |7.0  |23.8 |1547   |\n|[ecaresnet101d.miil_in1k](https://huggingface.co/timm/ecaresnet101d.miil_in1k)|224     |82.18|96.05|44.6       |8.1  |17.1 |1771   |\n|[resnext50_32x4d.fb_swsl_ig1b_ft_in1k](https://huggingface.co/timm/resnext50_32x4d.fb_swsl_ig1b_ft_in1k)|224     |82.17|96.22|25.0       |4.3  |14.4 |2943   |\n|[ecaresnet50t.a1_in1k](https://huggingface.co/timm/ecaresnet50t.a1_in1k)|288     |82.12|95.65|25.6       |7.1  |19.6 |1704   |\n|[resnext50_32x4d.a1h_in1k](https://huggingface.co/timm/resnext50_32x4d.a1h_in1k)|288     |82.03|95.94|25.0       |7.0  |23.8 |1745   |\n|[ecaresnet101d_pruned.miil_in1k](https://huggingface.co/timm/ecaresnet101d_pruned.miil_in1k)|288     |82.0 |96.15|24.9       |5.8  |12.7 |1787   |\n|[resnet61q.ra2_in1k](https://huggingface.co/timm/resnet61q.ra2_in1k)|256     |81.99|95.85|36.8       |7.8  |17.0 |2230   |\n|[resnext101_32x8d.tv2_in1k](https://huggingface.co/timm/resnext101_32x8d.tv2_in1k)|176     |81.98|95.72|88.8       |10.3 |19.4 |1768   |\n|[resnet152.a1_in1k](https://huggingface.co/timm/resnet152.a1_in1k)|224     |81.97|95.24|60.2       |11.6 |22.6 |1486   |\n|[resnet101.a1h_in1k](https://huggingface.co/timm/resnet101.a1h_in1k)|224     |81.93|95.75|44.6       |7.8  |16.2 |2122   |\n|[resnet101.tv2_in1k](https://huggingface.co/timm/resnet101.tv2_in1k)|224     |81.9 |95.77|44.6       |7.8  |16.2 |2118   |\n|[resnext101_32x16d.fb_ssl_yfcc100m_ft_in1k](https://huggingface.co/timm/resnext101_32x16d.fb_ssl_yfcc100m_ft_in1k)|224     |81.84|96.1 |194.0      |36.3 |51.2 |583    |\n|[resnet51q.ra2_in1k](https://huggingface.co/timm/resnet51q.ra2_in1k)|256     |81.78|95.94|35.7       |6.4  |16.6 |2471   |\n|[resnet152.a2_in1k](https://huggingface.co/timm/resnet152.a2_in1k)|224     |81.77|95.22|60.2       |11.6 |22.6 |1485   |\n|[resnetaa50d.sw_in12k_ft_in1k](https://huggingface.co/timm/resnetaa50d.sw_in12k_ft_in1k)|224     |81.74|96.06|25.6       |5.4  |12.4 |2813   |\n|[ecaresnet50t.a2_in1k](https://huggingface.co/timm/ecaresnet50t.a2_in1k)|288     |81.65|95.54|25.6       |7.1  |19.6 |1703   |\n|[ecaresnet50d.miil_in1k](https://huggingface.co/timm/ecaresnet50d.miil_in1k)|288     |81.64|95.88|25.6       |7.2  |19.7 |1694   |\n|[resnext101_32x8d.fb_ssl_yfcc100m_ft_in1k](https://huggingface.co/timm/resnext101_32x8d.fb_ssl_yfcc100m_ft_in1k)|224     |81.62|96.04|88.8       |16.5 |31.2 |1101   |\n|[wide_resnet50_2.tv2_in1k](https://huggingface.co/timm/wide_resnet50_2.tv2_in1k)|224     |81.61|95.76|68.9       |11.4 |14.4 |1930   |\n|[resnetaa50.a1h_in1k](https://huggingface.co/timm/resnetaa50.a1h_in1k)|288     |81.61|95.83|25.6       |8.5  |19.2 |1868   |\n|[resnet101.a1_in1k](https://huggingface.co/timm/resnet101.a1_in1k)|224     |81.5 |95.16|44.6       |7.8  |16.2 |2125   |\n|[resnext50_32x4d.a1_in1k](https://huggingface.co/timm/resnext50_32x4d.a1_in1k)|288     |81.48|95.16|25.0       |7.0  |23.8 |1745   |\n|[gcresnet50t.ra2_in1k](https://huggingface.co/timm/gcresnet50t.ra2_in1k)|288     |81.47|95.71|25.9       |6.9  |18.6 |2071   |\n|[wide_resnet50_2.racm_in1k](https://huggingface.co/timm/wide_resnet50_2.racm_in1k)|224     |81.45|95.53|68.9       |11.4 |14.4 |1929   |\n|[resnet50d.a1_in1k](https://huggingface.co/timm/resnet50d.a1_in1k)|288     |81.44|95.22|25.6       |7.2  |19.7 |1908   |\n|[ecaresnet50t.ra2_in1k](https://huggingface.co/timm/ecaresnet50t.ra2_in1k)|256     |81.44|95.67|25.6       |5.6  |15.4 |2168   |\n|[ecaresnetlight.miil_in1k](https://huggingface.co/timm/ecaresnetlight.miil_in1k)|288     |81.4 |95.82|30.2       |6.8  |13.9 |2132   |\n|[resnet50d.ra2_in1k](https://huggingface.co/timm/resnet50d.ra2_in1k)|288     |81.37|95.74|25.6       |7.2  |19.7 |1910   |\n|[resnet101.a2_in1k](https://huggingface.co/timm/resnet101.a2_in1k)|224     |81.32|95.19|44.6       |7.8  |16.2 |2125   |\n|[seresnet50.ra2_in1k](https://huggingface.co/timm/seresnet50.ra2_in1k)|288     |81.3 |95.65|28.1       |6.8  |18.4 |1803   |\n|[resnext50_32x4d.a2_in1k](https://huggingface.co/timm/resnext50_32x4d.a2_in1k)|288     |81.3 |95.11|25.0       |7.0  |23.8 |1746   |\n|[seresnext50_32x4d.racm_in1k](https://huggingface.co/timm/seresnext50_32x4d.racm_in1k)|224     |81.27|95.62|27.6       |4.3  |14.4 |2591   |\n|[ecaresnet50t.a1_in1k](https://huggingface.co/timm/ecaresnet50t.a1_in1k)|224     |81.26|95.16|25.6       |4.3  |11.8 |2823   |\n|[gcresnext50ts.ch_in1k](https://huggingface.co/timm/gcresnext50ts.ch_in1k)|288     |81.23|95.54|15.7       |4.8  |19.6 |2117   |\n|[senet154.gluon_in1k](https://huggingface.co/timm/senet154.gluon_in1k)|224     |81.23|95.35|115.1      |20.8 |38.7 |545    |\n|[resnet50.a1_in1k](https://huggingface.co/timm/resnet50.a1_in1k)|288     |81.22|95.11|25.6       |6.8  |18.4 |2089   |\n|[resnet50_gn.a1h_in1k](https://huggingface.co/timm/resnet50_gn.a1h_in1k)|288     |81.22|95.63|25.6       |6.8  |18.4 |676    |\n|[resnet50d.a2_in1k](https://huggingface.co/timm/resnet50d.a2_in1k)|288     |81.18|95.09|25.6       |7.2  |19.7 |1908   |\n|[resnet50.fb_swsl_ig1b_ft_in1k](https://huggingface.co/timm/resnet50.fb_swsl_ig1b_ft_in1k)|224     |81.18|95.98|25.6       |4.1  |11.1 |3455   |\n|[resnext50_32x4d.tv2_in1k](https://huggingface.co/timm/resnext50_32x4d.tv2_in1k)|224     |81.17|95.34|25.0       |4.3  |14.4 |2933   |\n|[resnext50_32x4d.a1h_in1k](https://huggingface.co/timm/resnext50_32x4d.a1h_in1k)|224     |81.1 |95.33|25.0       |4.3  |14.4 |2934   |\n|[seresnet50.a2_in1k](https://huggingface.co/timm/seresnet50.a2_in1k)|288     |81.1 |95.23|28.1       |6.8  |18.4 |1801   |\n|[seresnet50.a1_in1k](https://huggingface.co/timm/seresnet50.a1_in1k)|288     |81.1 |95.12|28.1       |6.8  |18.4 |1799   |\n|[resnet152s.gluon_in1k](https://huggingface.co/timm/resnet152s.gluon_in1k)|224     |81.02|95.41|60.3       |12.9 |25.0 |1347   |\n|[resnet50.d_in1k](https://huggingface.co/timm/resnet50.d_in1k)|288     |80.97|95.44|25.6       |6.8  |18.4 |2085   |\n|[gcresnet50t.ra2_in1k](https://huggingface.co/timm/gcresnet50t.ra2_in1k)|256     |80.94|95.45|25.9       |5.4  |14.7 |2571   |\n|[resnext101_32x4d.fb_ssl_yfcc100m_ft_in1k](https://huggingface.co/timm/resnext101_32x4d.fb_ssl_yfcc100m_ft_in1k)|224     |80.93|95.73|44.2       |8.0  |21.2 |1814   |\n|[resnet50.c1_in1k](https://huggingface.co/timm/resnet50.c1_in1k)|288     |80.91|95.55|25.6       |6.8  |18.4 |2084   |\n|[seresnext101_32x4d.gluon_in1k](https://huggingface.co/timm/seresnext101_32x4d.gluon_in1k)|224     |80.9 |95.31|49.0       |8.0  |21.3 |1585   |\n|[seresnext101_64x4d.gluon_in1k](https://huggingface.co/timm/seresnext101_64x4d.gluon_in1k)|224     |80.9 |95.3 |88.2       |15.5 |31.2 |918    |\n|[resnet50.c2_in1k](https://huggingface.co/timm/resnet50.c2_in1k)|288     |80.86|95.52|25.6       |6.8  |18.4 |2085   |\n|[resnet50.tv2_in1k](https://huggingface.co/timm/resnet50.tv2_in1k)|224     |80.85|95.43|25.6       |4.1  |11.1 |3450   |\n|[ecaresnet50t.a2_in1k](https://huggingface.co/timm/ecaresnet50t.a2_in1k)|224     |80.84|95.02|25.6       |4.3  |11.8 |2821   |\n|[ecaresnet101d_pruned.miil_in1k](https://huggingface.co/timm/ecaresnet101d_pruned.miil_in1k)|224     |80.79|95.62|24.9       |3.5  |7.7  |2961   |\n|[seresnet33ts.ra2_in1k](https://huggingface.co/timm/seresnet33ts.ra2_in1k)|288     |80.79|95.36|19.8       |6.0  |14.8 |2506   |\n|[ecaresnet50d_pruned.miil_in1k](https://huggingface.co/timm/ecaresnet50d_pruned.miil_in1k)|288     |80.79|95.58|19.9       |4.2  |10.6 |2349   |\n|[resnet50.a2_in1k](https://huggingface.co/timm/resnet50.a2_in1k)|288     |80.78|94.99|25.6       |6.8  |18.4 |2088   |\n|[resnet50.b1k_in1k](https://huggingface.co/timm/resnet50.b1k_in1k)|288     |80.71|95.43|25.6       |6.8  |18.4 |2087   |\n|[resnext50_32x4d.ra_in1k](https://huggingface.co/timm/resnext50_32x4d.ra_in1k)|288     |80.7 |95.39|25.0       |7.0  |23.8 |1749   |\n|[resnetrs101.tf_in1k](https://huggingface.co/timm/resnetrs101.tf_in1k)|192     |80.69|95.24|63.6       |6.0  |12.7 |2270   |\n|[resnet50d.a1_in1k](https://huggingface.co/timm/resnet50d.a1_in1k)|224     |80.68|94.71|25.6       |4.4  |11.9 |3162   |\n|[eca_resnet33ts.ra2_in1k](https://huggingface.co/timm/eca_resnet33ts.ra2_in1k)|288     |80.68|95.36|19.7       |6.0  |14.8 |2637   |\n|[resnet50.a1h_in1k](https://huggingface.co/timm/resnet50.a1h_in1k)|224     |80.67|95.3 |25.6       |4.1  |11.1 |3452   |\n|[resnext50d_32x4d.bt_in1k](https://huggingface.co/timm/resnext50d_32x4d.bt_in1k)|288     |80.67|95.42|25.0       |7.4  |25.1 |1626   |\n|[resnetaa50.a1h_in1k](https://huggingface.co/timm/resnetaa50.a1h_in1k)|224     |80.63|95.21|25.6       |5.2  |11.6 |3034   |\n|[ecaresnet50d.miil_in1k](https://huggingface.co/timm/ecaresnet50d.miil_in1k)|224     |80.61|95.32|25.6       |4.4  |11.9 |2813   |\n|[resnext101_64x4d.gluon_in1k](https://huggingface.co/timm/resnext101_64x4d.gluon_in1k)|224     |80.61|94.99|83.5       |15.5 |31.2 |989    |\n|[gcresnet33ts.ra2_in1k](https://huggingface.co/timm/gcresnet33ts.ra2_in1k)|288     |80.6 |95.31|19.9       |6.0  |14.8 |2578   |\n|[gcresnext50ts.ch_in1k](https://huggingface.co/timm/gcresnext50ts.ch_in1k)|256     |80.57|95.17|15.7       |3.8  |15.5 |2710   |\n|[resnet152.a3_in1k](https://huggingface.co/timm/resnet152.a3_in1k)|224     |80.56|95.0 |60.2       |11.6 |22.6 |1483   |\n|[resnet50d.ra2_in1k](https://huggingface.co/timm/resnet50d.ra2_in1k)|224     |80.53|95.16|25.6       |4.4  |11.9 |3164   |\n|[resnext50_32x4d.a1_in1k](https://huggingface.co/timm/resnext50_32x4d.a1_in1k)|224     |80.53|94.46|25.0       |4.3  |14.4 |2930   |\n|[wide_resnet101_2.tv2_in1k](https://huggingface.co/timm/wide_resnet101_2.tv2_in1k)|176     |80.48|94.98|126.9      |14.3 |13.2 |1719   |\n|[resnet152d.gluon_in1k](https://huggingface.co/timm/resnet152d.gluon_in1k)|224     |80.47|95.2 |60.2       |11.8 |23.4 |1428   |\n|[resnet50.b2k_in1k](https://huggingface.co/timm/resnet50.b2k_in1k)|288     |80.45|95.32|25.6       |6.8  |18.4 |2086   |\n|[ecaresnetlight.miil_in1k](https://huggingface.co/timm/ecaresnetlight.miil_in1k)|224     |80.45|95.24|30.2       |4.1  |8.4  |3530   |\n|[resnext50_32x4d.a2_in1k](https://huggingface.co/timm/resnext50_32x4d.a2_in1k)|224     |80.45|94.63|25.0       |4.3  |14.4 |2936   |\n|[wide_resnet50_2.tv2_in1k](https://huggingface.co/timm/wide_resnet50_2.tv2_in1k)|176     |80.43|95.09|68.9       |7.3  |9.0  |3015   |\n|[resnet101d.gluon_in1k](https://huggingface.co/timm/resnet101d.gluon_in1k)|224     |80.42|95.01|44.6       |8.1  |17.0 |2007   |\n|[resnet50.a1_in1k](https://huggingface.co/timm/resnet50.a1_in1k)|224     |80.38|94.6 |25.6       |4.1  |11.1 |3461   |\n|[seresnet33ts.ra2_in1k](https://huggingface.co/timm/seresnet33ts.ra2_in1k)|256     |80.36|95.1 |19.8       |4.8  |11.7 |3267   |\n|[resnext101_32x4d.gluon_in1k](https://huggingface.co/timm/resnext101_32x4d.gluon_in1k)|224     |80.34|94.93|44.2       |8.0  |21.2 |1814   |\n|[resnext50_32x4d.fb_ssl_yfcc100m_ft_in1k](https://huggingface.co/timm/resnext50_32x4d.fb_ssl_yfcc100m_ft_in1k)|224     |80.32|95.4 |25.0       |4.3  |14.4 |2941   |\n|[resnet101s.gluon_in1k](https://huggingface.co/timm/resnet101s.gluon_in1k)|224     |80.28|95.16|44.7       |9.2  |18.6 |1851   |\n|[seresnet50.ra2_in1k](https://huggingface.co/timm/seresnet50.ra2_in1k)|224     |80.26|95.08|28.1       |4.1  |11.1 |2972   |\n|[resnetblur50.bt_in1k](https://huggingface.co/timm/resnetblur50.bt_in1k)|288     |80.24|95.24|25.6       |8.5  |19.9 |1523   |\n|[resnet50d.a2_in1k](https://huggingface.co/timm/resnet50d.a2_in1k)|224     |80.22|94.63|25.6       |4.4  |11.9 |3162   |\n|[resnet152.tv2_in1k](https://huggingface.co/timm/resnet152.tv2_in1k)|176     |80.2 |94.64|60.2       |7.2  |14.0 |2346   |\n|[seresnet50.a2_in1k](https://huggingface.co/timm/seresnet50.a2_in1k)|224     |80.08|94.74|28.1       |4.1  |11.1 |2969   |\n|[eca_resnet33ts.ra2_in1k](https://huggingface.co/timm/eca_resnet33ts.ra2_in1k)|256     |80.08|94.97|19.7       |4.8  |11.7 |3284   |\n|[gcresnet33ts.ra2_in1k](https://huggingface.co/timm/gcresnet33ts.ra2_in1k)|256     |80.06|94.99|19.9       |4.8  |11.7 |3216   |\n|[resnet50_gn.a1h_in1k](https://huggingface.co/timm/resnet50_gn.a1h_in1k)|224     |80.06|94.95|25.6       |4.1  |11.1 |1109   |\n|[seresnet50.a1_in1k](https://huggingface.co/timm/seresnet50.a1_in1k)|224     |80.02|94.71|28.1       |4.1  |11.1 |2962   |\n|[resnet50.ram_in1k](https://huggingface.co/timm/resnet50.ram_in1k)|288     |79.97|95.05|25.6       |6.8  |18.4 |2086   |\n|[resnet152c.gluon_in1k](https://huggingface.co/timm/resnet152c.gluon_in1k)|224     |79.92|94.84|60.2       |11.8 |23.4 |1455   |\n|[seresnext50_32x4d.gluon_in1k](https://huggingface.co/timm/seresnext50_32x4d.gluon_in1k)|224     |79.91|94.82|27.6       |4.3  |14.4 |2591   |\n|[resnet50.d_in1k](https://huggingface.co/timm/resnet50.d_in1k)|224     |79.91|94.67|25.6       |4.1  |11.1 |3456   |\n|[resnet101.tv2_in1k](https://huggingface.co/timm/resnet101.tv2_in1k)|176     |79.9 |94.6 |44.6       |4.9  |10.1 |3341   |\n|[resnetrs50.tf_in1k](https://huggingface.co/timm/resnetrs50.tf_in1k)|224     |79.89|94.97|35.7       |4.5  |12.1 |2774   |\n|[resnet50.c2_in1k](https://huggingface.co/timm/resnet50.c2_in1k)|224     |79.88|94.87|25.6       |4.1  |11.1 |3455   |\n|[ecaresnet26t.ra2_in1k](https://huggingface.co/timm/ecaresnet26t.ra2_in1k)|320     |79.86|95.07|16.0       |5.2  |16.4 |2168   |\n|[resnet50.a2_in1k](https://huggingface.co/timm/resnet50.a2_in1k)|224     |79.85|94.56|25.6       |4.1  |11.1 |3460   |\n|[resnet50.ra_in1k](https://huggingface.co/timm/resnet50.ra_in1k)|288     |79.83|94.97|25.6       |6.8  |18.4 |2087   |\n|[resnet101.a3_in1k](https://huggingface.co/timm/resnet101.a3_in1k)|224     |79.82|94.62|44.6       |7.8  |16.2 |2114   |\n|[resnext50_32x4d.ra_in1k](https://huggingface.co/timm/resnext50_32x4d.ra_in1k)|224     |79.76|94.6 |25.0       |4.3  |14.4 |2943   |\n|[resnet50.c1_in1k](https://huggingface.co/timm/resnet50.c1_in1k)|224     |79.74|94.95|25.6       |4.1  |11.1 |3455   |\n|[ecaresnet50d_pruned.miil_in1k](https://huggingface.co/timm/ecaresnet50d_pruned.miil_in1k)|224     |79.74|94.87|19.9       |2.5  |6.4  |3929   |\n|[resnet33ts.ra2_in1k](https://huggingface.co/timm/resnet33ts.ra2_in1k)|288     |79.71|94.83|19.7       |6.0  |14.8 |2710   |\n|[resnet152.gluon_in1k](https://huggingface.co/timm/resnet152.gluon_in1k)|224     |79.68|94.74|60.2       |11.6 |22.6 |1486   |\n|[resnext50d_32x4d.bt_in1k](https://huggingface.co/timm/resnext50d_32x4d.bt_in1k)|224     |79.67|94.87|25.0       |4.5  |15.2 |2729   |\n|[resnet50.bt_in1k](https://huggingface.co/timm/resnet50.bt_in1k)|288     |79.63|94.91|25.6       |6.8  |18.4 |2086   |\n|[ecaresnet50t.a3_in1k](https://huggingface.co/timm/ecaresnet50t.a3_in1k)|224     |79.56|94.72|25.6       |4.3  |11.8 |2805   |\n|[resnet101c.gluon_in1k](https://huggingface.co/timm/resnet101c.gluon_in1k)|224     |79.53|94.58|44.6       |8.1  |17.0 |2062   |\n|[resnet50.b1k_in1k](https://huggingface.co/timm/resnet50.b1k_in1k)|224     |79.52|94.61|25.6       |4.1  |11.1 |3459   |\n|[resnet50.tv2_in1k](https://huggingface.co/timm/resnet50.tv2_in1k)|176     |79.42|94.64|25.6       |2.6  |6.9  |5397   |\n|[resnet32ts.ra2_in1k](https://huggingface.co/timm/resnet32ts.ra2_in1k)|288     |79.4 |94.66|18.0       |5.9  |14.6 |2752   |\n|[resnet50.b2k_in1k](https://huggingface.co/timm/resnet50.b2k_in1k)|224     |79.38|94.57|25.6       |4.1  |11.1 |3459   |\n|[resnext50_32x4d.tv2_in1k](https://huggingface.co/timm/resnext50_32x4d.tv2_in1k)|176     |79.37|94.3 |25.0       |2.7  |9.0  |4577   |\n|[resnext50_32x4d.gluon_in1k](https://huggingface.co/timm/resnext50_32x4d.gluon_in1k)|224     |79.36|94.43|25.0       |4.3  |14.4 |2942   |\n|[resnext101_32x8d.tv_in1k](https://huggingface.co/timm/resnext101_32x8d.tv_in1k)|224     |79.31|94.52|88.8       |16.5 |31.2 |1100   |\n|[resnet101.gluon_in1k](https://huggingface.co/timm/resnet101.gluon_in1k)|224     |79.31|94.53|44.6       |7.8  |16.2 |2125   |\n|[resnetblur50.bt_in1k](https://huggingface.co/timm/resnetblur50.bt_in1k)|224     |79.31|94.63|25.6       |5.2  |12.0 |2524   |\n|[resnet50.a1h_in1k](https://huggingface.co/timm/resnet50.a1h_in1k)|176     |79.27|94.49|25.6       |2.6  |6.9  |5404   |\n|[resnext50_32x4d.a3_in1k](https://huggingface.co/timm/resnext50_32x4d.a3_in1k)|224     |79.25|94.31|25.0       |4.3  |14.4 |2931   |\n|[resnet50.fb_ssl_yfcc100m_ft_in1k](https://huggingface.co/timm/resnet50.fb_ssl_yfcc100m_ft_in1k)|224     |79.22|94.84|25.6       |4.1  |11.1 |3451   |\n|[resnet33ts.ra2_in1k](https://huggingface.co/timm/resnet33ts.ra2_in1k)|256     |79.21|94.56|19.7       |4.8  |11.7 |3392   |\n|[resnet50d.gluon_in1k](https://huggingface.co/timm/resnet50d.gluon_in1k)|224     |79.07|94.48|25.6       |4.4  |11.9 |3162   |\n|[resnet50.ram_in1k](https://huggingface.co/timm/resnet50.ram_in1k)|224     |79.03|94.38|25.6       |4.1  |11.1 |3453   |\n|[resnet50.am_in1k](https://huggingface.co/timm/resnet50.am_in1k)|224     |79.01|94.39|25.6       |4.1  |11.1 |3461   |\n|[resnet32ts.ra2_in1k](https://huggingface.co/timm/resnet32ts.ra2_in1k)|256     |79.01|94.37|18.0       |4.6  |11.6 |3440   |\n|[ecaresnet26t.ra2_in1k](https://huggingface.co/timm/ecaresnet26t.ra2_in1k)|256     |78.9 |94.54|16.0       |3.4  |10.5 |3421   |\n|[resnet152.a3_in1k](https://huggingface.co/timm/resnet152.a3_in1k)|160     |78.89|94.11|60.2       |5.9  |11.5 |2745   |\n|[wide_resnet101_2.tv_in1k](https://huggingface.co/timm/wide_resnet101_2.tv_in1k)|224     |78.84|94.28|126.9      |22.8 |21.2 |1079   |\n|[seresnext26d_32x4d.bt_in1k](https://huggingface.co/timm/seresnext26d_32x4d.bt_in1k)|288     |78.83|94.24|16.8       |4.5  |16.8 |2251   |\n|[resnet50.ra_in1k](https://huggingface.co/timm/resnet50.ra_in1k)|224     |78.81|94.32|25.6       |4.1  |11.1 |3454   |\n|[seresnext26t_32x4d.bt_in1k](https://huggingface.co/timm/seresnext26t_32x4d.bt_in1k)|288     |78.74|94.33|16.8       |4.5  |16.7 |2264   |\n|[resnet50s.gluon_in1k](https://huggingface.co/timm/resnet50s.gluon_in1k)|224     |78.72|94.23|25.7       |5.5  |13.5 |2796   |\n|[resnet50d.a3_in1k](https://huggingface.co/timm/resnet50d.a3_in1k)|224     |78.71|94.24|25.6       |4.4  |11.9 |3154   |\n|[wide_resnet50_2.tv_in1k](https://huggingface.co/timm/wide_resnet50_2.tv_in1k)|224     |78.47|94.09|68.9       |11.4 |14.4 |1934   |\n|[resnet50.bt_in1k](https://huggingface.co/timm/resnet50.bt_in1k)|224     |78.46|94.27|25.6       |4.1  |11.1 |3454   |\n|[resnet34d.ra2_in1k](https://huggingface.co/timm/resnet34d.ra2_in1k)|288     |78.43|94.35|21.8       |6.5  |7.5  |3291   |\n|[gcresnext26ts.ch_in1k](https://huggingface.co/timm/gcresnext26ts.ch_in1k)|288     |78.42|94.04|10.5       |3.1  |13.3 |3226   |\n|[resnet26t.ra2_in1k](https://huggingface.co/timm/resnet26t.ra2_in1k)|320     |78.33|94.13|16.0       |5.2  |16.4 |2391   |\n|[resnet152.tv_in1k](https://huggingface.co/timm/resnet152.tv_in1k)|224     |78.32|94.04|60.2       |11.6 |22.6 |1487   |\n|[seresnext26ts.ch_in1k](https://huggingface.co/timm/seresnext26ts.ch_in1k)|288     |78.28|94.1 |10.4       |3.1  |13.3 |3062   |\n|[bat_resnext26ts.ch_in1k](https://huggingface.co/timm/bat_resnext26ts.ch_in1k)|256     |78.25|94.1 |10.7       |2.5  |12.5 |3393   |\n|[resnet50.a3_in1k](https://huggingface.co/timm/resnet50.a3_in1k)|224     |78.06|93.78|25.6       |4.1  |11.1 |3450   |\n|[resnet50c.gluon_in1k](https://huggingface.co/timm/resnet50c.gluon_in1k)|224     |78.0 |93.99|25.6       |4.4  |11.9 |3286   |\n|[eca_resnext26ts.ch_in1k](https://huggingface.co/timm/eca_resnext26ts.ch_in1k)|288     |78.0 |93.91|10.3       |3.1  |13.3 |3297   |\n|[seresnext26t_32x4d.bt_in1k](https://huggingface.co/timm/seresnext26t_32x4d.bt_in1k)|224     |77.98|93.75|16.8       |2.7  |10.1 |3841   |\n|[resnet34.a1_in1k](https://huggingface.co/timm/resnet34.a1_in1k)|288     |77.92|93.77|21.8       |6.1  |6.2  |3609   |\n|[resnet101.a3_in1k](https://huggingface.co/timm/resnet101.a3_in1k)|160     |77.88|93.71|44.6       |4.0  |8.3  |3926   |\n|[resnet26t.ra2_in1k](https://huggingface.co/timm/resnet26t.ra2_in1k)|256     |77.87|93.84|16.0       |3.4  |10.5 |3772   |\n|[seresnext26ts.ch_in1k](https://huggingface.co/timm/seresnext26ts.ch_in1k)|256     |77.86|93.79|10.4       |2.4  |10.5 |4263   |\n|[resnetrs50.tf_in1k](https://huggingface.co/timm/resnetrs50.tf_in1k)|160     |77.82|93.81|35.7       |2.3  |6.2  |5238   |\n|[gcresnext26ts.ch_in1k](https://huggingface.co/timm/gcresnext26ts.ch_in1k)|256     |77.81|93.82|10.5       |2.4  |10.5 |4183   |\n|[ecaresnet50t.a3_in1k](https://huggingface.co/timm/ecaresnet50t.a3_in1k)|160     |77.79|93.6 |25.6       |2.2  |6.0  |5329   |\n|[resnext50_32x4d.a3_in1k](https://huggingface.co/timm/resnext50_32x4d.a3_in1k)|160     |77.73|93.32|25.0       |2.2  |7.4  |5576   |\n|[resnext50_32x4d.tv_in1k](https://huggingface.co/timm/resnext50_32x4d.tv_in1k)|224     |77.61|93.7 |25.0       |4.3  |14.4 |2944   |\n|[seresnext26d_32x4d.bt_in1k](https://huggingface.co/timm/seresnext26d_32x4d.bt_in1k)|224     |77.59|93.61|16.8       |2.7  |10.2 |3807   |\n|[resnet50.gluon_in1k](https://huggingface.co/timm/resnet50.gluon_in1k)|224     |77.58|93.72|25.6       |4.1  |11.1 |3455   |\n|[eca_resnext26ts.ch_in1k](https://huggingface.co/timm/eca_resnext26ts.ch_in1k)|256     |77.44|93.56|10.3       |2.4  |10.5 |4284   |\n|[resnet26d.bt_in1k](https://huggingface.co/timm/resnet26d.bt_in1k)|288     |77.41|93.63|16.0       |4.3  |13.5 |2907   |\n|[resnet101.tv_in1k](https://huggingface.co/timm/resnet101.tv_in1k)|224     |77.38|93.54|44.6       |7.8  |16.2 |2125   |\n|[resnet50d.a3_in1k](https://huggingface.co/timm/resnet50d.a3_in1k)|160     |77.22|93.27|25.6       |2.2  |6.1  |5982   |\n|[resnext26ts.ra2_in1k](https://huggingface.co/timm/resnext26ts.ra2_in1k)|288     |77.17|93.47|10.3       |3.1  |13.3 |3392   |\n|[resnet34.a2_in1k](https://huggingface.co/timm/resnet34.a2_in1k)|288     |77.15|93.27|21.8       |6.1  |6.2  |3615   |\n|[resnet34d.ra2_in1k](https://huggingface.co/timm/resnet34d.ra2_in1k)|224     |77.1 |93.37|21.8       |3.9  |4.5  |5436   |\n|[seresnet50.a3_in1k](https://huggingface.co/timm/seresnet50.a3_in1k)|224     |77.02|93.07|28.1       |4.1  |11.1 |2952   |\n|[resnext26ts.ra2_in1k](https://huggingface.co/timm/resnext26ts.ra2_in1k)|256     |76.78|93.13|10.3       |2.4  |10.5 |4410   |\n|[resnet26d.bt_in1k](https://huggingface.co/timm/resnet26d.bt_in1k)|224     |76.7 |93.17|16.0       |2.6  |8.2  |4859   |\n|[resnet34.bt_in1k](https://huggingface.co/timm/resnet34.bt_in1k)|288     |76.5 |93.35|21.8       |6.1  |6.2  |3617   |\n|[resnet34.a1_in1k](https://huggingface.co/timm/resnet34.a1_in1k)|224     |76.42|92.87|21.8       |3.7  |3.7  |5984   |\n|[resnet26.bt_in1k](https://huggingface.co/timm/resnet26.bt_in1k)|288     |76.35|93.18|16.0       |3.9  |12.2 |3331   |\n|[resnet50.tv_in1k](https://huggingface.co/timm/resnet50.tv_in1k)|224     |76.13|92.86|25.6       |4.1  |11.1 |3457   |\n|[resnet50.a3_in1k](https://huggingface.co/timm/resnet50.a3_in1k)|160     |75.96|92.5 |25.6       |2.1  |5.7  |6490   |\n|[resnet34.a2_in1k](https://huggingface.co/timm/resnet34.a2_in1k)|224     |75.52|92.44|21.8       |3.7  |3.7  |5991   |\n|[resnet26.bt_in1k](https://huggingface.co/timm/resnet26.bt_in1k)|224     |75.3 |92.58|16.0       |2.4  |7.4  |5583   |\n|[resnet34.bt_in1k](https://huggingface.co/timm/resnet34.bt_in1k)|224     |75.16|92.18|21.8       |3.7  |3.7  |5994   |\n|[seresnet50.a3_in1k](https://huggingface.co/timm/seresnet50.a3_in1k)|160     |75.1 |92.08|28.1       |2.1  |5.7  |5513   |\n|[resnet34.gluon_in1k](https://huggingface.co/timm/resnet34.gluon_in1k)|224     |74.57|91.98|21.8       |3.7  |3.7  |5984   |\n|[resnet18d.ra2_in1k](https://huggingface.co/timm/resnet18d.ra2_in1k)|288     |73.81|91.83|11.7       |3.4  |5.4  |5196   |\n|[resnet34.tv_in1k](https://huggingface.co/timm/resnet34.tv_in1k)|224     |73.32|91.42|21.8       |3.7  |3.7  |5979   |\n|[resnet18.fb_swsl_ig1b_ft_in1k](https://huggingface.co/timm/resnet18.fb_swsl_ig1b_ft_in1k)|224     |73.28|91.73|11.7       |1.8  |2.5  |10213  |\n|[resnet18.a1_in1k](https://huggingface.co/timm/resnet18.a1_in1k)|288     |73.16|91.03|11.7       |3.0  |4.1  |6050   |\n|[resnet34.a3_in1k](https://huggingface.co/timm/resnet34.a3_in1k)|224     |72.98|91.11|21.8       |3.7  |3.7  |5967   |\n|[resnet18.fb_ssl_yfcc100m_ft_in1k](https://huggingface.co/timm/resnet18.fb_ssl_yfcc100m_ft_in1k)|224     |72.6 |91.42|11.7       |1.8  |2.5  |10213  |\n|[resnet18.a2_in1k](https://huggingface.co/timm/resnet18.a2_in1k)|288     |72.37|90.59|11.7       |3.0  |4.1  |6051   |\n|[resnet14t.c3_in1k](https://huggingface.co/timm/resnet14t.c3_in1k)|224     |72.26|90.31|10.1       |1.7  |5.8  |7026   |\n|[resnet18d.ra2_in1k](https://huggingface.co/timm/resnet18d.ra2_in1k)|224     |72.26|90.68|11.7       |2.1  |3.3  |8707   |\n|[resnet18.a1_in1k](https://huggingface.co/timm/resnet18.a1_in1k)|224     |71.49|90.07|11.7       |1.8  |2.5  |10187  |\n|[resnet14t.c3_in1k](https://huggingface.co/timm/resnet14t.c3_in1k)|176     |71.31|89.69|10.1       |1.1  |3.6  |10970  |\n|[resnet18.gluon_in1k](https://huggingface.co/timm/resnet18.gluon_in1k)|224     |70.84|89.76|11.7       |1.8  |2.5  |10210  |\n|[resnet18.a2_in1k](https://huggingface.co/timm/resnet18.a2_in1k)|224     |70.64|89.47|11.7       |1.8  |2.5  |10194  |\n|[resnet34.a3_in1k](https://huggingface.co/timm/resnet34.a3_in1k)|160     |70.56|89.52|21.8       |1.9  |1.9  |10737  |\n|[resnet18.tv_in1k](https://huggingface.co/timm/resnet18.tv_in1k)|224     |69.76|89.07|11.7       |1.8  |2.5  |10205  |\n|[resnet10t.c3_in1k](https://huggingface.co/timm/resnet10t.c3_in1k)|224     |68.34|88.03|5.4        |1.1  |2.4  |13079  |\n|[resnet18.a3_in1k](https://huggingface.co/timm/resnet18.a3_in1k)|224     |68.25|88.17|11.7       |1.8  |2.5  |10167  |\n|[resnet10t.c3_in1k](https://huggingface.co/timm/resnet10t.c3_in1k)|176     |66.71|86.96|5.4        |0.7  |1.5  |20327  |\n|[resnet18.a3_in1k](https://huggingface.co/timm/resnet18.a3_in1k)|160     |65.66|86.26|11.7       |0.9  |1.3  |18229  |\n\n## Citation\n```bibtex\n@article{He2015,\n  author = {Kaiming He and Xiangyu Zhang and Shaoqing Ren and Jian Sun},\n  title = {Deep Residual Learning for Image Recognition},\n  journal = {arXiv preprint arXiv:1512.03385},\n  year = {2015}\n}\n```\n```bibtex\n@misc{rw2019timm,\n  author = {Ross Wightman},\n  title = {PyTorch Image Models},\n  year = {2019},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  doi = {10.5281/zenodo.4414861},\n  howpublished = {\\url{https://github.com/huggingface/pytorch-image-models}}\n}\n```\n",
+              "extracted_code": "from urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model('resnet18.tv_in1k', pretrained=True)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\ntop5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)\n\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'resnet18.tv_in1k',\n    pretrained=True,\n    features_only=True,\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\nfor o in output:\n    # print shape of each feature map in output\n    # e.g.:\n    #  torch.Size([1, 64, 112, 112])\n    #  torch.Size([1, 64, 56, 56])\n    #  torch.Size([1, 128, 28, 28])\n    #  torch.Size([1, 256, 14, 14])\n    #  torch.Size([1, 512, 7, 7])\n\n    print(o.shape)\n\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'resnet18.tv_in1k',\n    pretrained=True,\n    num_classes=0,  # remove classifier nn.Linear\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor\n\n# or equivalently (without needing to set num_classes=0)\n\noutput = model.forward_features(transforms(img).unsqueeze(0))\n# output is unpooled, a (1, 512, 7, 7) shaped tensor\n\noutput = model.forward_head(output, pre_logits=True)\n# output is a (1, num_features) shaped tensor"
+            },
+            {
+              "id": "timm/mobilenetv2_100.ra_in1k",
+              "author": "timm",
+              "sha": "5afa12513b048c79b9147a5d210e9bdc50035481",
+              "created_at": "2022-12-13T00:00:26+00:00",
+              "last_modified": "2025-01-21T18:17:54+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 58553,
+              "likes": 4,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "model.safetensors"
+                },
+                {
+                  "rfilename": "pytorch_model.bin"
+                }
+              ],
+              "card_data": {
+                "license": "apache-2.0",
+                "language": [],
+                "library_name": "timm",
+                "tags": [
+                  "image-classification",
+                  "timm",
+                  "transformers"
+                ],
+                "datasets": [
+                  "imagenet-1k"
+                ],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "timm",
+                "pytorch",
+                "safetensors",
+                "image-classification",
+                "transformers",
+                "dataset:imagenet-1k",
+                "arxiv:2110.00476",
+                "arxiv:1801.04381",
+                "license:apache-2.0",
+                "region:us"
+              ],
+              "pipeline_tag": "image-classification",
+              "library_name": "timm",
+              "readme": "---\ntags:\n- image-classification\n- timm\n- transformers\nlibrary_name: timm\nlicense: apache-2.0\ndatasets:\n- imagenet-1k\n---\n# Model card for mobilenetv2_100.ra_in1k\n\nA MobileNet-v2 image classification model. Trained on ImageNet-1k in `timm` using recipe template described below.\n\nRecipe details:\n * RandAugment `RA` recipe. Inspired by and evolved from EfficientNet RandAugment recipes. Published as `B` recipe in [ResNet Strikes Back](https://arxiv.org/abs/2110.00476).\n * RMSProp (TF 1.0 behaviour) optimizer, EMA weight averaging\n * Step (exponential decay w/ staircase) LR schedule with warmup\n\n\n## Model Details\n- **Model Type:** Image classification / feature backbone\n- **Model Stats:**\n  - Params (M): 3.5\n  - GMACs: 0.3\n  - Activations (M): 6.7\n  - Image size: 224 x 224\n- **Papers:**\n  - MobileNetV2: Inverted Residuals and Linear Bottlenecks: https://arxiv.org/abs/1801.04381\n  - ResNet strikes back: An improved training procedure in timm: https://arxiv.org/abs/2110.00476\n- **Dataset:** ImageNet-1k\n- **Original:** https://github.com/huggingface/pytorch-image-models\n\n## Model Usage\n### Image Classification\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model('mobilenetv2_100.ra_in1k', pretrained=True)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\ntop5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)\n```\n\n### Feature Map Extraction\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'mobilenetv2_100.ra_in1k',\n    pretrained=True,\n    features_only=True,\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\nfor o in output:\n    # print shape of each feature map in output\n    # e.g.:\n    #  torch.Size([1, 16, 112, 112])\n    #  torch.Size([1, 24, 56, 56])\n    #  torch.Size([1, 32, 28, 28])\n    #  torch.Size([1, 96, 14, 14])\n    #  torch.Size([1, 320, 7, 7])\n\n    print(o.shape)\n```\n\n### Image Embeddings\n```python\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'mobilenetv2_100.ra_in1k',\n    pretrained=True,\n    num_classes=0,  # remove classifier nn.Linear\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor\n\n# or equivalently (without needing to set num_classes=0)\n\noutput = model.forward_features(transforms(img).unsqueeze(0))\n# output is unpooled, a (1, 1280, 7, 7) shaped tensor\n\noutput = model.forward_head(output, pre_logits=True)\n# output is a (1, num_features) shaped tensor\n```\n\n## Model Comparison\nExplore the dataset and runtime metrics of this model in timm [model results](https://github.com/huggingface/pytorch-image-models/tree/main/results).\n\n## Citation\n```bibtex\n@inproceedings{sandler2018mobilenetv2,\n  title={Mobilenetv2: Inverted residuals and linear bottlenecks},\n  author={Sandler, Mark and Howard, Andrew and Zhu, Menglong and Zhmoginov, Andrey and Chen, Liang-Chieh},\n  booktitle={Proceedings of the IEEE conference on computer vision and pattern recognition},\n  pages={4510--4520},\n  year={2018}\n}\n```\n```bibtex\n@misc{rw2019timm,\n  author = {Ross Wightman},\n  title = {PyTorch Image Models},\n  year = {2019},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  doi = {10.5281/zenodo.4414861},\n  howpublished = {\\url{https://github.com/huggingface/pytorch-image-models}}\n}\n```\n```bibtex\n@inproceedings{wightman2021resnet,\n  title={ResNet strikes back: An improved training procedure in timm},\n  author={Wightman, Ross and Touvron, Hugo and Jegou, Herve},\n  booktitle={NeurIPS 2021 Workshop on ImageNet: Past, Present, and Future}\n}\n```\n",
+              "extracted_code": "from urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model('mobilenetv2_100.ra_in1k', pretrained=True)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\ntop5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)\n\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'mobilenetv2_100.ra_in1k',\n    pretrained=True,\n    features_only=True,\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1\n\nfor o in output:\n    # print shape of each feature map in output\n    # e.g.:\n    #  torch.Size([1, 16, 112, 112])\n    #  torch.Size([1, 24, 56, 56])\n    #  torch.Size([1, 32, 28, 28])\n    #  torch.Size([1, 96, 14, 14])\n    #  torch.Size([1, 320, 7, 7])\n\n    print(o.shape)\n\nfrom urllib.request import urlopen\nfrom PIL import Image\nimport timm\n\nimg = Image.open(urlopen(\n    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'\n))\n\nmodel = timm.create_model(\n    'mobilenetv2_100.ra_in1k',\n    pretrained=True,\n    num_classes=0,  # remove classifier nn.Linear\n)\nmodel = model.eval()\n\n# get model specific transforms (normalization, resize)\ndata_config = timm.data.resolve_model_data_config(model)\ntransforms = timm.data.create_transform(**data_config, is_training=False)\n\noutput = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor\n\n# or equivalently (without needing to set num_classes=0)\n\noutput = model.forward_features(transforms(img).unsqueeze(0))\n# output is unpooled, a (1, 1280, 7, 7) shaped tensor\n\noutput = model.forward_head(output, pre_logits=True)\n# output is a (1, num_features) shaped tensor"
+            },
+            {
+              "id": "google-bert/bert-base-uncased",
+              "author": "google-bert",
+              "sha": "86b5e0934494bd15c9632b12f734a8a67f723594",
+              "created_at": "2022-03-02T23:29:04+00:00",
+              "last_modified": "2024-02-19T11:06:12+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 55171860,
+              "likes": 2417,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "LICENSE"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "config.json"
+                },
+                {
+                  "rfilename": "coreml/fill-mask/float32_model.mlpackage/Data/com.apple.CoreML/model.mlmodel"
+                },
+                {
+                  "rfilename": "coreml/fill-mask/float32_model.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+                },
+                {
+                  "rfilename": "coreml/fill-mask/float32_model.mlpackage/Manifest.json"
+                },
+                {
+                  "rfilename": "flax_model.msgpack"
+                },
+                {
+                  "rfilename": "model.onnx"
+                },
+                {
+                  "rfilename": "model.safetensors"
+                }
+              ],
+              "card_data": {
+                "license": "apache-2.0",
+                "language": "en",
+                "tags": [
+                  "exbert"
+                ],
+                "datasets": [
+                  "bookcorpus",
+                  "wikipedia"
+                ],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "transformers",
+                "pytorch",
+                "tf",
+                "jax",
+                "rust",
+                "coreml",
+                "onnx",
+                "safetensors",
+                "bert",
+                "fill-mask",
+                "exbert",
+                "en",
+                "dataset:bookcorpus",
+                "dataset:wikipedia",
+                "arxiv:1810.04805",
+                "license:apache-2.0",
+                "autotrain_compatible",
+                "endpoints_compatible",
+                "region:us"
+              ],
+              "pipeline_tag": "fill-mask",
+              "library_name": "transformers",
+              "readme": "---\nlanguage: en\ntags:\n- exbert\nlicense: apache-2.0\ndatasets:\n- bookcorpus\n- wikipedia\n---\n\n# BERT base model (uncased)\n\nPretrained model on English language using a masked language modeling (MLM) objective. It was introduced in\n[this paper](https://arxiv.org/abs/1810.04805) and first released in\n[this repository](https://github.com/google-research/bert). This model is uncased: it does not make a difference\nbetween english and English.\n\nDisclaimer: The team releasing BERT did not write a model card for this model so this model card has been written by\nthe Hugging Face team.\n\n## Model description\n\nBERT is a transformers model pretrained on a large corpus of English data in a self-supervised fashion. This means it\nwas pretrained on the raw texts only, with no humans labeling them in any way (which is why it can use lots of\npublicly available data) with an automatic process to generate inputs and labels from those texts. More precisely, it\nwas pretrained with two objectives:\n\n- Masked language modeling (MLM): taking a sentence, the model randomly masks 15% of the words in the input then run\n  the entire masked sentence through the model and has to predict the masked words. This is different from traditional\n  recurrent neural networks (RNNs) that usually see the words one after the other, or from autoregressive models like\n  GPT which internally masks the future tokens. It allows the model to learn a bidirectional representation of the\n  sentence.\n- Next sentence prediction (NSP): the models concatenates two masked sentences as inputs during pretraining. Sometimes\n  they correspond to sentences that were next to each other in the original text, sometimes not. The model then has to\n  predict if the two sentences were following each other or not.\n\nThis way, the model learns an inner representation of the English language that can then be used to extract features\nuseful for downstream tasks: if you have a dataset of labeled sentences, for instance, you can train a standard\nclassifier using the features produced by the BERT model as inputs.\n\n## Model variations\n\nBERT has originally been released in base and large variations, for cased and uncased input text. The uncased models also strips out an accent markers.  \nChinese and multilingual uncased and cased versions followed shortly after.  \nModified preprocessing with whole word masking has replaced subpiece masking in a following work, with the release of two models.  \nOther 24 smaller models are released afterward.  \n\nThe detailed release history can be found on the [google-research/bert readme](https://github.com/google-research/bert/blob/master/README.md) on github.\n\n| Model | #params | Language |\n|------------------------|--------------------------------|-------|\n| [`bert-base-uncased`](https://huggingface.co/bert-base-uncased) | 110M   | English |\n| [`bert-large-uncased`](https://huggingface.co/bert-large-uncased)              | 340M    | English | sub \n| [`bert-base-cased`](https://huggingface.co/bert-base-cased)        | 110M    | English |\n| [`bert-large-cased`](https://huggingface.co/bert-large-cased) | 340M    |  English |\n| [`bert-base-chinese`](https://huggingface.co/bert-base-chinese) | 110M    | Chinese |\n| [`bert-base-multilingual-cased`](https://huggingface.co/bert-base-multilingual-cased) | 110M | Multiple |\n| [`bert-large-uncased-whole-word-masking`](https://huggingface.co/bert-large-uncased-whole-word-masking) | 340M | English |\n| [`bert-large-cased-whole-word-masking`](https://huggingface.co/bert-large-cased-whole-word-masking) | 340M | English |\n\n## Intended uses & limitations\n\nYou can use the raw model for either masked language modeling or next sentence prediction, but it's mostly intended to\nbe fine-tuned on a downstream task. See the [model hub](https://huggingface.co/models?filter=bert) to look for\nfine-tuned versions of a task that interests you.\n\nNote that this model is primarily aimed at being fine-tuned on tasks that use the whole sentence (potentially masked)\nto make decisions, such as sequence classification, token classification or question answering. For tasks such as text\ngeneration you should look at model like GPT2.\n\n### How to use\n\nYou can use this model directly with a pipeline for masked language modeling:\n\n```python\n>>> from transformers import pipeline\n>>> unmasker = pipeline('fill-mask', model='bert-base-uncased')\n>>> unmasker(\"Hello I'm a [MASK] model.\")\n\n[{'sequence': \"[CLS] hello i'm a fashion model. [SEP]\",\n  'score': 0.1073106899857521,\n  'token': 4827,\n  'token_str': 'fashion'},\n {'sequence': \"[CLS] hello i'm a role model. [SEP]\",\n  'score': 0.08774490654468536,\n  'token': 2535,\n  'token_str': 'role'},\n {'sequence': \"[CLS] hello i'm a new model. [SEP]\",\n  'score': 0.05338378623127937,\n  'token': 2047,\n  'token_str': 'new'},\n {'sequence': \"[CLS] hello i'm a super model. [SEP]\",\n  'score': 0.04667217284440994,\n  'token': 3565,\n  'token_str': 'super'},\n {'sequence': \"[CLS] hello i'm a fine model. [SEP]\",\n  'score': 0.027095865458250046,\n  'token': 2986,\n  'token_str': 'fine'}]\n```\n\nHere is how to use this model to get the features of a given text in PyTorch:\n\n```python\nfrom transformers import BertTokenizer, BertModel\ntokenizer = BertTokenizer.from_pretrained('bert-base-uncased')\nmodel = BertModel.from_pretrained(\"bert-base-uncased\")\ntext = \"Replace me by any text you'd like.\"\nencoded_input = tokenizer(text, return_tensors='pt')\noutput = model(**encoded_input)\n```\n\nand in TensorFlow:\n\n```python\nfrom transformers import BertTokenizer, TFBertModel\ntokenizer = BertTokenizer.from_pretrained('bert-base-uncased')\nmodel = TFBertModel.from_pretrained(\"bert-base-uncased\")\ntext = \"Replace me by any text you'd like.\"\nencoded_input = tokenizer(text, return_tensors='tf')\noutput = model(encoded_input)\n```\n\n### Limitations and bias\n\nEven if the training data used for this model could be characterized as fairly neutral, this model can have biased\npredictions:\n\n```python\n>>> from transformers import pipeline\n>>> unmasker = pipeline('fill-mask', model='bert-base-uncased')\n>>> unmasker(\"The man worked as a [MASK].\")\n\n[{'sequence': '[CLS] the man worked as a carpenter. [SEP]',\n  'score': 0.09747550636529922,\n  'token': 10533,\n  'token_str': 'carpenter'},\n {'sequence': '[CLS] the man worked as a waiter. [SEP]',\n  'score': 0.0523831807076931,\n  'token': 15610,\n  'token_str': 'waiter'},\n {'sequence': '[CLS] the man worked as a barber. [SEP]',\n  'score': 0.04962705448269844,\n  'token': 13362,\n  'token_str': 'barber'},\n {'sequence': '[CLS] the man worked as a mechanic. [SEP]',\n  'score': 0.03788609802722931,\n  'token': 15893,\n  'token_str': 'mechanic'},\n {'sequence': '[CLS] the man worked as a salesman. [SEP]',\n  'score': 0.037680890411138535,\n  'token': 18968,\n  'token_str': 'salesman'}]\n\n>>> unmasker(\"The woman worked as a [MASK].\")\n\n[{'sequence': '[CLS] the woman worked as a nurse. [SEP]',\n  'score': 0.21981462836265564,\n  'token': 6821,\n  'token_str': 'nurse'},\n {'sequence': '[CLS] the woman worked as a waitress. [SEP]',\n  'score': 0.1597415804862976,\n  'token': 13877,\n  'token_str': 'waitress'},\n {'sequence': '[CLS] the woman worked as a maid. [SEP]',\n  'score': 0.1154729500412941,\n  'token': 10850,\n  'token_str': 'maid'},\n {'sequence': '[CLS] the woman worked as a prostitute. [SEP]',\n  'score': 0.037968918681144714,\n  'token': 19215,\n  'token_str': 'prostitute'},\n {'sequence': '[CLS] the woman worked as a cook. [SEP]',\n  'score': 0.03042375110089779,\n  'token': 5660,\n  'token_str': 'cook'}]\n```\n\nThis bias will also affect all fine-tuned versions of this model.\n\n## Training data\n\nThe BERT model was pretrained on [BookCorpus](https://yknzhu.wixsite.com/mbweb), a dataset consisting of 11,038\nunpublished books and [English Wikipedia](https://en.wikipedia.org/wiki/English_Wikipedia) (excluding lists, tables and\nheaders).\n\n## Training procedure\n\n### Preprocessing\n\nThe texts are lowercased and tokenized using WordPiece and a vocabulary size of 30,000. The inputs of the model are\nthen of the form:\n\n```\n[CLS] Sentence A [SEP] Sentence B [SEP]\n```\n\nWith probability 0.5, sentence A and sentence B correspond to two consecutive sentences in the original corpus, and in\nthe other cases, it's another random sentence in the corpus. Note that what is considered a sentence here is a\nconsecutive span of text usually longer than a single sentence. The only constrain is that the result with the two\n\"sentences\" has a combined length of less than 512 tokens.\n\nThe details of the masking procedure for each sentence are the following:\n- 15% of the tokens are masked.\n- In 80% of the cases, the masked tokens are replaced by `[MASK]`.\n- In 10% of the cases, the masked tokens are replaced by a random token (different) from the one they replace.\n- In the 10% remaining cases, the masked tokens are left as is.\n\n### Pretraining\n\nThe model was trained on 4 cloud TPUs in Pod configuration (16 TPU chips total) for one million steps with a batch size\nof 256. The sequence length was limited to 128 tokens for 90% of the steps and 512 for the remaining 10%. The optimizer\nused is Adam with a learning rate of 1e-4, \\\\(\\beta_{1} = 0.9\\\\) and \\\\(\\beta_{2} = 0.999\\\\), a weight decay of 0.01,\nlearning rate warmup for 10,000 steps and linear decay of the learning rate after.\n\n## Evaluation results\n\nWhen fine-tuned on downstream tasks, this model achieves the following results:\n\nGlue test results:\n\n| Task | MNLI-(m/mm) | QQP  | QNLI | SST-2 | CoLA | STS-B | MRPC | RTE  | Average |\n|:----:|:-----------:|:----:|:----:|:-----:|:----:|:-----:|:----:|:----:|:-------:|\n|      | 84.6/83.4   | 71.2 | 90.5 | 93.5  | 52.1 | 85.8  | 88.9 | 66.4 | 79.6    |\n\n\n### BibTeX entry and citation info\n\n```bibtex\n@article{DBLP:journals/corr/abs-1810-04805,\n  author    = {Jacob Devlin and\n               Ming{-}Wei Chang and\n               Kenton Lee and\n               Kristina Toutanova},\n  title     = {{BERT:} Pre-training of Deep Bidirectional Transformers for Language\n               Understanding},\n  journal   = {CoRR},\n  volume    = {abs/1810.04805},\n  year      = {2018},\n  url       = {http://arxiv.org/abs/1810.04805},\n  archivePrefix = {arXiv},\n  eprint    = {1810.04805},\n  timestamp = {Tue, 30 Oct 2018 20:39:56 +0100},\n  biburl    = {https://dblp.org/rec/journals/corr/abs-1810-04805.bib},\n  bibsource = {dblp computer science bibliography, https://dblp.org}\n}\n```\n\n<a href=\"https://huggingface.co/exbert/?model=bert-base-uncased\">\n\t<img width=\"300px\" src=\"https://cdn-media.huggingface.co/exbert/button.png\">\n</a>\n",
+              "extracted_code": "from transformers import pipeline\nunmasker = pipeline('fill-mask', model='bert-base-uncased')\nunmasker(\"Hello I'm a [MASK] model.\")\n\nfrom transformers import BertTokenizer, BertModel\ntokenizer = BertTokenizer.from_pretrained('bert-base-uncased')\nmodel = BertModel.from_pretrained(\"bert-base-uncased\")\ntext = \"Replace me by any text you'd like.\"\nencoded_input = tokenizer(text, return_tensors='pt')\noutput = model(**encoded_input)\n\nfrom transformers import BertTokenizer, TFBertModel\ntokenizer = BertTokenizer.from_pretrained('bert-base-uncased')\nmodel = TFBertModel.from_pretrained(\"bert-base-uncased\")\ntext = \"Replace me by any text you'd like.\"\nencoded_input = tokenizer(text, return_tensors='tf')\noutput = model(encoded_input)\n\nfrom transformers import pipeline\nunmasker = pipeline('fill-mask', model='bert-base-uncased')\nunmasker(\"The man worked as a [MASK].\")\nunmasker(\"The woman worked as a [MASK].\")"
+            }
+          ],
+          "datasets": [
+            {
+              "id": "uoft-cs/cifar10",
+              "author": "uoft-cs",
+              "sha": "0b2714987fa478483af9968de7c934580d0bb9a2",
+              "created_at": "2022-03-02T23:29:22+00:00",
+              "last_modified": "2024-01-04T06:53:11+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 75814,
+              "likes": 84,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "plain_text/test-00000-of-00001.parquet"
+                },
+                {
+                  "rfilename": "plain_text/train-00000-of-00001.parquet"
+                }
+              ],
+              "card_data": {
+                "license": [
+                  "unknown"
+                ],
+                "language": [
+                  "en"
+                ],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [
+                  "image-classification"
+                ],
+                "size_categories": [
+                  "10K<n<100K"
+                ],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:image-classification",
+                "annotations_creators:crowdsourced",
+                "language_creators:found",
+                "multilinguality:monolingual",
+                "source_datasets:extended|other-80-Million-Tiny-Images",
+                "language:en",
+                "license:unknown",
+                "size_categories:10K<n<100K",
+                "format:parquet",
+                "modality:image",
+                "library:datasets",
+                "library:pandas",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\nannotations_creators:\n- crowdsourced\nlanguage_creators:\n- found\nlanguage:\n- en\nlicense:\n- unknown\nmultilinguality:\n- monolingual\nsize_categories:\n- 10K<n<100K\nsource_datasets:\n- extended|other-80-Million-Tiny-Images\ntask_categories:\n- image-classification\ntask_ids: []\npaperswithcode_id: cifar-10\npretty_name: Cifar10\ndataset_info:\n  config_name: plain_text\n  features:\n  - name: img\n    dtype: image\n  - name: label\n    dtype:\n      class_label:\n        names:\n          '0': airplane\n          '1': automobile\n          '2': bird\n          '3': cat\n          '4': deer\n          '5': dog\n          '6': frog\n          '7': horse\n          '8': ship\n          '9': truck\n  splits:\n  - name: train\n    num_bytes: 113648310.0\n    num_examples: 50000\n  - name: test\n    num_bytes: 22731580.0\n    num_examples: 10000\n  download_size: 143646105\n  dataset_size: 136379890.0\nconfigs:\n- config_name: plain_text\n  data_files:\n  - split: train\n    path: plain_text/train-*\n  - split: test\n    path: plain_text/test-*\n  default: true\n---\n\n# Dataset Card for CIFAR-10\n\n## Table of Contents\n- [Dataset Description](#dataset-description)\n  - [Dataset Summary](#dataset-summary)\n  - [Supported Tasks and Leaderboards](#supported-tasks-and-leaderboards)\n  - [Languages](#languages)\n- [Dataset Structure](#dataset-structure)\n  - [Data Instances](#data-instances)\n  - [Data Fields](#data-fields)\n  - [Data Splits](#data-splits)\n- [Dataset Creation](#dataset-creation)\n  - [Curation Rationale](#curation-rationale)\n  - [Source Data](#source-data)\n  - [Annotations](#annotations)\n  - [Personal and Sensitive Information](#personal-and-sensitive-information)\n- [Considerations for Using the Data](#considerations-for-using-the-data)\n  - [Social Impact of Dataset](#social-impact-of-dataset)\n  - [Discussion of Biases](#discussion-of-biases)\n  - [Other Known Limitations](#other-known-limitations)\n- [Additional Information](#additional-information)\n  - [Dataset Curators](#dataset-curators)\n  - [Licensing Information](#licensing-information)\n  - [Citation Information](#citation-information)\n  - [Contributions](#contributions)\n\n## Dataset Description\n\n- **Homepage:** https://www.cs.toronto.edu/~kriz/cifar.html\n- **Repository:** \n- **Paper:** Learning Multiple Layers of Features from Tiny Images by Alex Krizhevsky\n- **Leaderboard:**\n- **Point of Contact:**\n\n### Dataset Summary\n\nThe CIFAR-10 dataset consists of 60000 32x32 colour images in 10 classes, with 6000 images per class. There are 50000 training images and 10000 test images.\nThe dataset is divided into five training batches and one test batch, each with 10000 images. The test batch contains exactly 1000 randomly-selected images from each class. The training batches contain the remaining images in random order, but some training batches may contain more images from one class than another. Between them, the training batches contain exactly 5000 images from each class.\n\n### Supported Tasks and Leaderboards\n\n- `image-classification`: The goal of this task is to classify a given image into one of 10 classes. The leaderboard is available [here](https://paperswithcode.com/sota/image-classification-on-cifar-10).\n\n### Languages\n\nEnglish\n\n## Dataset Structure\n\n### Data Instances\n\nA sample from the training set is provided below:\n\n```\n{\n  'img': <PIL.PngImagePlugin.PngImageFile image mode=RGB size=32x32 at 0x201FA6EE748>,\n  'label': 0\n}\n```\n\n### Data Fields\n\n- img: A `PIL.Image.Image` object containing the 32x32 image. Note that when accessing the image column: `dataset[0][\"image\"]` the image file is automatically decoded. Decoding of a large number of image files might take a significant amount of time. Thus it is important to first query the sample index before the `\"image\"` column, *i.e.* `dataset[0][\"image\"]` should **always** be preferred over `dataset[\"image\"][0]`\n- label: 0-9 with the following correspondence\n         0 airplane\n         1 automobile\n         2 bird\n         3 cat\n         4 deer\n         5 dog\n         6 frog\n         7 horse\n         8 ship\n         9 truck\n\n### Data Splits\n\nTrain and Test\n\n## Dataset Creation\n\n### Curation Rationale\n\n[More Information Needed]\n\n### Source Data\n\n#### Initial Data Collection and Normalization\n\n[More Information Needed]\n\n#### Who are the source language producers?\n\n[More Information Needed]\n\n### Annotations\n\n#### Annotation process\n\n[More Information Needed]\n\n#### Who are the annotators?\n\n[More Information Needed]\n\n### Personal and Sensitive Information\n\n[More Information Needed]\n\n## Considerations for Using the Data\n\n### Social Impact of Dataset\n\n[More Information Needed]\n\n### Discussion of Biases\n\n[More Information Needed]\n\n### Other Known Limitations\n\n[More Information Needed]\n\n## Additional Information\n\n### Dataset Curators\n\n[More Information Needed]\n\n### Licensing Information\n\n[More Information Needed]\n\n### Citation Information\n\n```\n@TECHREPORT{Krizhevsky09learningmultiple,\n    author = {Alex Krizhevsky},\n    title = {Learning multiple layers of features from tiny images},\n    institution = {},\n    year = {2009}\n}\n```\n\n### Contributions\n\nThanks to [@czabo](https://github.com/czabo) for adding this dataset.",
+              "extracted_code": ""
+            },
+            {
+              "id": "robro/cifar10-c-parquet",
+              "author": "robro",
+              "sha": "19c813b71fc13aa6cb76e97cb036c768df69cf3e",
+              "created_at": "2025-09-10T19:53:55+00:00",
+              "last_modified": "2025-09-10T20:39:09+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 196,
+              "likes": 1,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data-00000-of-00005.arrow"
+                },
+                {
+                  "rfilename": "data-00001-of-00005.arrow"
+                },
+                {
+                  "rfilename": "data-00002-of-00005.arrow"
+                },
+                {
+                  "rfilename": "data-00003-of-00005.arrow"
+                },
+                {
+                  "rfilename": "data-00004-of-00005.arrow"
+                },
+                {
+                  "rfilename": "dataset_info.json"
+                },
+                {
+                  "rfilename": "state.json"
+                }
+              ],
+              "tags": [
+                "size_categories:100K<n<1M",
+                "format:arrow",
+                "modality:image",
+                "modality:text",
+                "library:datasets",
+                "library:mlcroissant",
+                "arxiv:1903.12261",
+                "region:us"
+              ],
+              "readme": "---\n# For reference on dataset card metadata, see the spec: https://github.com/huggingface/hub-docs/blob/main/datasetcard.md?plain=1\n# Doc / guide: https://huggingface.co/docs/hub/datasets-cards\n{}\n---\n\n# Dataset Card for CIFAR10-C\n\n<!-- Provide a quick summary of the dataset. -->\n\nThis dataset is simply an update of the original dataset into the parquet format which should work with the current (circa 2025) huggingface dataset library\n\n## Dataset Details\n\n### Dataset Description\n\n<!-- Provide a longer summary of what this dataset is. -->\nThe CIFAR-10-C dataset is an extension of CIFAR-10 designed to evaluate model robustness to common corruptions. It consists of 950,000 images derived from the original CIFAR-10 test set (10,000 images) by applying 19 different corruption types at 5 severity levels. The corruptions include noise, blur, weather effects, and digital distortions. This dataset is widely used for benchmarking robustness in image classification tasks.\n\n### Dataset Sources\n\n<!-- Provide the basic links for the dataset. -->\n\n- **Homepage:** https://github.com/hendrycks/robustness\n- **Paper:** Hendrycks, D., & Dietterich, T. (2019). Benchmarking neural network robustness to common corruptions and perturbations. arXiv preprint arXiv:1903.12261.\n\n## Dataset Structure\n\n<!-- This section provides a description of the dataset fields, and additional information about the dataset structure such as criteria used to create the splits, relationships between data points, etc. -->\n\nEach sample in the dataset contains:\n\n- **image**: A 32×32 RGB image in PNG format\n\n- **label**: An integer between 0 and 9, representing the class\n\n- **corruption_name**: The name of the applied corruption\n\n- **corruption_level**: An integer between 1 and 5 indicating severity\n\n\nTotal images: 950,000\n\nClasses: 10 (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck)\n\nCorruptions: 19 types (e.g., Gaussian noise, motion blur, contrast, fog, frost, elastic transform, pixelate, JPEG compression, etc.)\n\nSeverity Levels: 5 (ranging from least to most severe)\n\nSplits:\n\n- **Train**: 950,000 images\n\nImage specs: PNG format, 32×32 pixels, RGB\n\n## Example Usage\nBelow is a quick example of how to load this dataset via the Hugging Face Datasets library.\n\n```python\nfrom datasets import load_dataset\n\n# Load the dataset\ndataset = load_dataset(\"robro/cifar10-c-parquet\", split=\"train\", trust_remote_code=False)\nclasses = [\"airplane\",\"automobile\",\"bird\",\"cat\",\"deer\",\"dog\",\"frog\",\"horse\",\"ship\",\"truck\",]\n\n# Access a sample from the dataset\nexample = dataset[0]\nimage = example[\"image\"]\nlabel = example[\"label\"]\n\nimage.show()  # Display the image\nprint(f\"Label: {classes[label]}\")\n```\n\n## Citation\n\n<!-- If there is a paper or blog post introducing the dataset, the APA and Bibtex information for that should go in this section. -->\n\n**BibTeX:**\n\n```bibtex\n@article{hendrycks2019benchmarking,\n  title={Benchmarking neural network robustness to common corruptions and perturbations},\n  author={Hendrycks, Dan and Dietterich, Thomas},\n  journal={arXiv preprint arXiv:1903.12261},\n  year={2019}\n}\n```\n",
+              "extracted_code": "from datasets import load_dataset\n\n# Load the dataset\ndataset = load_dataset(\"robro/cifar10-c-parquet\", split=\"train\", trust_remote_code=False)\nclasses = [\"airplane\",\"automobile\",\"bird\",\"cat\",\"deer\",\"dog\",\"frog\",\"horse\",\"ship\",\"truck\",]\n\n# Access a sample from the dataset\nexample = dataset[0]\nimage = example[\"image\"]\nlabel = example[\"label\"]\n\nimage.show()  # Display the image\nprint(f\"Label: {classes[label]}\")"
+            },
+            {
+              "id": "stanfordnlp/sst2",
+              "author": "stanfordnlp",
+              "sha": "8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb",
+              "created_at": "2022-06-13T14:01:47+00:00",
+              "last_modified": "2024-01-04T16:31:07+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 18719,
+              "likes": 131,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data/test-00000-of-00001.parquet"
+                },
+                {
+                  "rfilename": "data/train-00000-of-00001.parquet"
+                },
+                {
+                  "rfilename": "data/validation-00000-of-00001.parquet"
+                }
+              ],
+              "card_data": {
+                "license": [
+                  "unknown"
+                ],
+                "language": [
+                  "en"
+                ],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [
+                  "text-classification"
+                ],
+                "size_categories": [
+                  "10K<n<100K"
+                ],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:text-classification",
+                "task_ids:sentiment-classification",
+                "annotations_creators:crowdsourced",
+                "language_creators:found",
+                "multilinguality:monolingual",
+                "source_datasets:original",
+                "language:en",
+                "license:unknown",
+                "size_categories:10K<n<100K",
+                "format:parquet",
+                "modality:text",
+                "library:datasets",
+                "library:pandas",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\nannotations_creators:\n- crowdsourced\nlanguage_creators:\n- found\nlanguage:\n- en\nlicense:\n- unknown\nmultilinguality:\n- monolingual\nsize_categories:\n- 10K<n<100K\nsource_datasets:\n- original\ntask_categories:\n- text-classification\ntask_ids:\n- sentiment-classification\npaperswithcode_id: sst\npretty_name: Stanford Sentiment Treebank v2\ndataset_info:\n  features:\n  - name: idx\n    dtype: int32\n  - name: sentence\n    dtype: string\n  - name: label\n    dtype:\n      class_label:\n        names:\n          '0': negative\n          '1': positive\n  splits:\n  - name: train\n    num_bytes: 4681603\n    num_examples: 67349\n  - name: validation\n    num_bytes: 106252\n    num_examples: 872\n  - name: test\n    num_bytes: 216640\n    num_examples: 1821\n  download_size: 3331058\n  dataset_size: 5004495\nconfigs:\n- config_name: default\n  data_files:\n  - split: train\n    path: data/train-*\n  - split: validation\n    path: data/validation-*\n  - split: test\n    path: data/test-*\n---\n\n# Dataset Card for [Dataset Name]\n\n## Table of Contents\n- [Table of Contents](#table-of-contents)\n- [Dataset Description](#dataset-description)\n  - [Dataset Summary](#dataset-summary)\n  - [Supported Tasks and Leaderboards](#supported-tasks-and-leaderboards)\n  - [Languages](#languages)\n- [Dataset Structure](#dataset-structure)\n  - [Data Instances](#data-instances)\n  - [Data Fields](#data-fields)\n  - [Data Splits](#data-splits)\n- [Dataset Creation](#dataset-creation)\n  - [Curation Rationale](#curation-rationale)\n  - [Source Data](#source-data)\n  - [Annotations](#annotations)\n  - [Personal and Sensitive Information](#personal-and-sensitive-information)\n- [Considerations for Using the Data](#considerations-for-using-the-data)\n  - [Social Impact of Dataset](#social-impact-of-dataset)\n  - [Discussion of Biases](#discussion-of-biases)\n  - [Other Known Limitations](#other-known-limitations)\n- [Additional Information](#additional-information)\n  - [Dataset Curators](#dataset-curators)\n  - [Licensing Information](#licensing-information)\n  - [Citation Information](#citation-information)\n  - [Contributions](#contributions)\n\n## Dataset Description\n\n- **Homepage:** https://nlp.stanford.edu/sentiment/\n- **Repository:**\n- **Paper:** [Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank](https://www.aclweb.org/anthology/D13-1170/)\n- **Leaderboard:**\n- **Point of Contact:**\n\n### Dataset Summary\n\nThe Stanford Sentiment Treebank is a corpus with fully labeled parse trees that allows for a complete analysis of the\ncompositional effects of sentiment in language. The corpus is based on the dataset introduced by Pang and Lee (2005)\nand consists of 11,855 single sentences extracted from movie reviews. It was parsed with the Stanford parser and\nincludes a total of 215,154 unique phrases from those parse trees, each annotated by 3 human judges.\n\nBinary classification experiments on full sentences (negative or somewhat negative vs somewhat positive or positive\nwith neutral sentences discarded) refer to the dataset as SST-2 or SST binary.\n\n### Supported Tasks and Leaderboards\n\n- `sentiment-classification`\n\n### Languages\n\nThe text in the dataset is in English (`en`).\n\n## Dataset Structure\n\n### Data Instances\n\n```\n{'idx': 0,\n 'sentence': 'hide new secretions from the parental units ',\n 'label': 0}\n```\n\n### Data Fields\n\n- `idx`: Monotonically increasing index ID.\n- `sentence`: Complete sentence expressing an opinion about a film.\n- `label`: Sentiment of the opinion, either \"negative\" (0) or positive (1). The test set labels are hidden (-1).\n\n### Data Splits\n\n|                    |    train | validation | test |\n|--------------------|---------:|-----------:|-----:|\n| Number of examples |    67349 |        872 | 1821 |\n\n## Dataset Creation\n\n### Curation Rationale\n\n[More Information Needed]\n\n### Source Data\n\n#### Initial Data Collection and Normalization\n\n[More Information Needed]\n\n#### Who are the source language producers?\n\nRotten Tomatoes reviewers.\n\n### Annotations\n\n#### Annotation process\n\n[More Information Needed]\n\n#### Who are the annotators?\n\n[More Information Needed]\n\n### Personal and Sensitive Information\n\n[More Information Needed]\n\n## Considerations for Using the Data\n\n### Social Impact of Dataset\n\n[More Information Needed]\n\n### Discussion of Biases\n\n[More Information Needed]\n\n### Other Known Limitations\n\n[More Information Needed]\n\n## Additional Information\n\n### Dataset Curators\n\n[More Information Needed]\n\n### Licensing Information\n\nUnknown.\n\n### Citation Information\n\n```bibtex\n@inproceedings{socher-etal-2013-recursive,\n    title = \"Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank\",\n    author = \"Socher, Richard  and\n      Perelygin, Alex  and\n      Wu, Jean  and\n      Chuang, Jason  and\n      Manning, Christopher D.  and\n      Ng, Andrew  and\n      Potts, Christopher\",\n    booktitle = \"Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing\",\n    month = oct,\n    year = \"2013\",\n    address = \"Seattle, Washington, USA\",\n    publisher = \"Association for Computational Linguistics\",\n    url = \"https://www.aclweb.org/anthology/D13-1170\",\n    pages = \"1631--1642\",\n}\n```\n\n### Contributions\n\nThanks to [@albertvillanova](https://github.com/albertvillanova) for adding this dataset.",
+              "extracted_code": ""
+            },
+            {
+              "id": "ajaykarthick/imdb-movie-reviews",
+              "author": "ajaykarthick",
+              "sha": "2537b681735c256a7ab829666b118e03c3eb9e0a",
+              "created_at": "2023-02-08T18:30:11+00:00",
+              "last_modified": "2023-02-08T21:08:35+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 729,
+              "likes": 5,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "images/movie_reviews.jpg"
+                },
+                {
+                  "rfilename": "test.jsonl"
+                },
+                {
+                  "rfilename": "train.jsonl"
+                }
+              ],
+              "card_data": {
+                "language": [],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [
+                  "text-classification",
+                  "token-classification",
+                  "feature-extraction"
+                ],
+                "size_categories": [
+                  "10K<n<100K"
+                ],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:text-classification",
+                "task_categories:token-classification",
+                "task_categories:feature-extraction",
+                "size_categories:10K<n<100K",
+                "format:json",
+                "modality:text",
+                "library:datasets",
+                "library:pandas",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\ntask_categories:\n- text-classification\n- token-classification\n- feature-extraction\npretty_name: Movie-Reviews\nsize_categories:\n- 10K<n<100K\n---\n# IMDB Movie Reviews \n\n![movie_reivews](images/movie_reviews.jpg)\n\nThis is a dataset for binary sentiment classification containing substantially huge data. This dataset contains a set of 50,000 highly polar movie reviews for training models for text classification tasks. \n\nThe dataset is downloaded from \n\nhttps://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz\n\nThis data is processed and splitted into training and test datasets (0.2% test split). Training dataset contains 40000 reviews and test dataset contains 10000 reviews.\n\nEqual distribution among the labels in both training and test dataset. in training dataset, there are 20000 records for both positive and negative classes. In test dataset, there are 5000 records both the labels.\n\n\n\n### Citation Information\n\n```\n@InProceedings{maas-EtAl:2011:ACL-HLT2011,\n  author    = {Maas, Andrew L.  and  Daly, Raymond E.  and  Pham, Peter T.  and  Huang, Dan  and  Ng, Andrew Y.  and  Potts, Christopher},\n  title     = {Learning Word Vectors for Sentiment Analysis},\n  booktitle = {Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies},\n  month     = {June},\n  year      = {2011},\n  address   = {Portland, Oregon, USA},\n  publisher = {Association for Computational Linguistics},\n  pages     = {142--150},\n  url       = {http://www.aclweb.org/anthology/P11-1015}\n}\n```",
+              "extracted_code": ""
+            },
+            {
+              "id": "Neuronovo/neuronovo-utc-data-glue-mnli",
+              "author": "Neuronovo",
+              "sha": "a1fbcdc0845b1793f066ceea222f1a60cc263a5f",
+              "created_at": "2024-01-25T19:46:58+00:00",
+              "last_modified": "2024-01-25T21:01:39+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 35,
+              "likes": 0,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "data/test-00000-of-00001.parquet"
+                },
+                {
+                  "rfilename": "data/train-00000-of-00001.parquet"
+                },
+                {
+                  "rfilename": "data/validation-00000-of-00001.parquet"
+                }
+              ],
+              "card_data": {
+                "language": [],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [],
+                "size_categories": [],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "size_categories:1M<n<10M",
+                "format:parquet",
+                "modality:tabular",
+                "modality:text",
+                "library:datasets",
+                "library:pandas",
+                "library:mlcroissant",
+                "library:polars",
+                "region:us"
+              ],
+              "readme": "---\ndataset_info:\n  features:\n  - name: x\n    dtype: string\n  - name: y\n    dtype: int64\n  - name: label_id\n    dtype: int64\n  - name: text\n    dtype: string\n  - name: id\n    dtype: int64\n  splits:\n  - name: train\n    num_bytes: 492690051\n    num_examples: 1119828\n  - name: validation\n    num_bytes: 25718605\n    num_examples: 58278\n  - name: test\n    num_bytes: 26234868\n    num_examples: 58941\n  download_size: 144048422\n  dataset_size: 544643524\nconfigs:\n- config_name: default\n  data_files:\n  - split: train\n    path: data/train-*\n  - split: validation\n    path: data/validation-*\n  - split: test\n    path: data/test-*\n---\n",
+              "extracted_code": ""
+            },
+            {
+              "id": "jhu-cogsci/hans",
+              "author": "jhu-cogsci",
+              "sha": "365cc516c1a05ce78fc750597bcec838b65f1f2f",
+              "created_at": "2022-03-02T23:29:22+00:00",
+              "last_modified": "2024-01-18T11:04:31+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 837,
+              "likes": 5,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "hans.py"
+                }
+              ],
+              "card_data": {
+                "license": [
+                  "unknown"
+                ],
+                "language": [
+                  "en"
+                ],
+                "tags": [],
+                "datasets": [],
+                "task_categories": [
+                  "text-classification"
+                ],
+                "size_categories": [
+                  "10K<n<100K"
+                ],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:text-classification",
+                "task_ids:natural-language-inference",
+                "annotations_creators:expert-generated",
+                "language_creators:expert-generated",
+                "multilinguality:monolingual",
+                "source_datasets:original",
+                "language:en",
+                "license:unknown",
+                "size_categories:10K<n<100K",
+                "arxiv:1902.01007",
+                "region:us"
+              ],
+              "readme": "---\nannotations_creators:\n- expert-generated\nlanguage_creators:\n- expert-generated\nlanguage:\n- en\nlicense:\n- unknown\nmultilinguality:\n- monolingual\nsize_categories:\n- 10K<n<100K\nsource_datasets:\n- original\ntask_categories:\n- text-classification\ntask_ids:\n- natural-language-inference\npaperswithcode_id: hans\npretty_name: Heuristic Analysis for NLI Systems\ndataset_info:\n  features:\n  - name: premise\n    dtype: string\n  - name: hypothesis\n    dtype: string\n  - name: label\n    dtype:\n      class_label:\n        names:\n          '0': entailment\n          '1': non-entailment\n  - name: parse_premise\n    dtype: string\n  - name: parse_hypothesis\n    dtype: string\n  - name: binary_parse_premise\n    dtype: string\n  - name: binary_parse_hypothesis\n    dtype: string\n  - name: heuristic\n    dtype: string\n  - name: subcase\n    dtype: string\n  - name: template\n    dtype: string\n  config_name: plain_text\n  splits:\n  - name: train\n    num_bytes: 15916371\n    num_examples: 30000\n  - name: validation\n    num_bytes: 15893137\n    num_examples: 30000\n  download_size: 30947358\n  dataset_size: 31809508\n---\n\n# Dataset Card for \"hans\"\n\n## Table of Contents\n- [Dataset Description](#dataset-description)\n  - [Dataset Summary](#dataset-summary)\n  - [Supported Tasks and Leaderboards](#supported-tasks-and-leaderboards)\n  - [Languages](#languages)\n- [Dataset Structure](#dataset-structure)\n  - [Data Instances](#data-instances)\n  - [Data Fields](#data-fields)\n  - [Data Splits](#data-splits)\n- [Dataset Creation](#dataset-creation)\n  - [Curation Rationale](#curation-rationale)\n  - [Source Data](#source-data)\n  - [Annotations](#annotations)\n  - [Personal and Sensitive Information](#personal-and-sensitive-information)\n- [Considerations for Using the Data](#considerations-for-using-the-data)\n  - [Social Impact of Dataset](#social-impact-of-dataset)\n  - [Discussion of Biases](#discussion-of-biases)\n  - [Other Known Limitations](#other-known-limitations)\n- [Additional Information](#additional-information)\n  - [Dataset Curators](#dataset-curators)\n  - [Licensing Information](#licensing-information)\n  - [Citation Information](#citation-information)\n  - [Contributions](#contributions)\n\n## Dataset Description\n\n- **Homepage:** [https://github.com/tommccoy1/hans](https://github.com/tommccoy1/hans)\n- **Repository:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n- **Paper:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n- **Point of Contact:** [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n- **Size of downloaded dataset files:** 30.94 MB\n- **Size of the generated dataset:** 31.81 MB\n- **Total amount of disk used:** 62.76 MB\n\n### Dataset Summary\n\nThe HANS dataset is an NLI evaluation set that tests specific hypotheses about invalid heuristics that NLI models are likely to learn.\n\n### Supported Tasks and Leaderboards\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Languages\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n## Dataset Structure\n\n### Data Instances\n\n#### plain_text\n\n- **Size of downloaded dataset files:** 30.94 MB\n- **Size of the generated dataset:** 31.81 MB\n- **Total amount of disk used:** 62.76 MB\n\nAn example of 'train' looks as follows.\n```\n\n```\n\n### Data Fields\n\nThe data fields are the same among all splits.\n\n#### plain_text\n- `premise`: a `string` feature.\n- `hypothesis`: a `string` feature.\n- `label`: a classification label, with possible values including `entailment` (0), `non-entailment` (1).\n- `parse_premise`: a `string` feature.\n- `parse_hypothesis`: a `string` feature.\n- `binary_parse_premise`: a `string` feature.\n- `binary_parse_hypothesis`: a `string` feature.\n- `heuristic`: a `string` feature.\n- `subcase`: a `string` feature.\n- `template`: a `string` feature.\n\n### Data Splits\n\n|   name   |train|validation|\n|----------|----:|---------:|\n|plain_text|30000|     30000|\n\n## Dataset Creation\n\n### Curation Rationale\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Source Data\n\n#### Initial Data Collection and Normalization\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n#### Who are the source language producers?\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Annotations\n\n#### Annotation process\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n#### Who are the annotators?\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Personal and Sensitive Information\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n## Considerations for Using the Data\n\n### Social Impact of Dataset\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Discussion of Biases\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Other Known Limitations\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n## Additional Information\n\n### Dataset Curators\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Licensing Information\n\n[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)\n\n### Citation Information\n\n```\n@article{DBLP:journals/corr/abs-1902-01007,\n  author    = {R. Thomas McCoy and\n               Ellie Pavlick and\n               Tal Linzen},\n  title     = {Right for the Wrong Reasons: Diagnosing Syntactic Heuristics in Natural\n               Language Inference},\n  journal   = {CoRR},\n  volume    = {abs/1902.01007},\n  year      = {2019},\n  url       = {http://arxiv.org/abs/1902.01007},\n  archivePrefix = {arXiv},\n  eprint    = {1902.01007},\n  timestamp = {Tue, 21 May 2019 18:03:36 +0200},\n  biburl    = {https://dblp.org/rec/journals/corr/abs-1902-01007.bib},\n  bibsource = {dblp computer science bibliography, https://dblp.org}\n}\n\n```\n\n\n### Contributions\n\nThanks to [@TevenLeScao](https://github.com/TevenLeScao), [@thomwolf](https://github.com/thomwolf) for adding this dataset.",
+              "extracted_code": ""
+            }
+          ]
+        }
+      }
     }
   },
   "idea_info_history": [
