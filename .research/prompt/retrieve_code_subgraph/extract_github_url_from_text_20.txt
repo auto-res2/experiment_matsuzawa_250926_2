@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed Prototype-oriented Conditional Transport (PCT) framework consists of three main parts: 1) Learning Class Prototypes: Instead of computationally expensive average latent features, PCT uses the linear classifier's weights as learnable class prototypes (µk). These prototypes are learned using cross-entropy loss on labeled source data, introducing no additional parameters. 2) Bi-directional Prototype-oriented Conditional Transport: This involves two expected cost minimizations. First, 'target-to-prototype' (Lt→µ) encourages target features (ftj) to align with prototypes (µk) using a conditional probability πθ(µk|ftj) and cosine dissimilarity, promoting a mode-seeking behavior. Second, 'prototype-to-target' (Lµ→t) ensures each prototype is close to some target features using πθ(ftj|µk) to prevent degenerate solutions. The total loss combines these with the classification loss (Lcls + Lt→µ + Lµ→t), with gradients of µ being stopped in transport losses for stability and source-private settings. 3) Learning Class Proportions in the Target Domain: Target class proportions {p(µk)} are inferred iteratively via an EM algorithm, maximizing the log-likelihood of unlabeled target data. It initializes with a uniform prior and updates proportions based on the average predicted probabilities from target mini-batches, using a decaying learning rate schedule for the update.
+
+# GitHub URLs List
+['https://github.com/korawat-tanwisuth/Proto_DA']
+Output:
+{
+    "index": 0
+}
