@@ -1,0 +1,22 @@
+# config/smoke_test.yaml
+
+description: "Smoke test with synthetic dataset and SimpleNet model"
+
+dataset:
+  name: synthetic
+  batch_size: 32
+  num_workers: 0
+
+model:
+  name: simplenet
+  lr: 0.001
+  weight_decay: 0.0
+
+training:
+  epochs: 2
+  seed: 42
+  save_dir: "experiments"
+  early_stopping_patience: 5
+
+evaluation:
+  metrics: [accuracy, precision, recall, f1]

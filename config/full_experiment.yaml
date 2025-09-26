@@ -1,0 +1,45 @@
+# config/full_experiment.yaml
+# Specialised configuration for Experiment 1 (CIFAR-10 + ResNet-18)
+
+description: |
+  Experiment 1 – CIFAR-10 with ResNet-18 baseline using the common framework.
+  This config is used for both AUTOMATA-Fixed-10 and Progressive-AUTOMATA when
+  called with suitable CLI overrides.
+
+dataset:
+  name: cifar10                  # now concrete – uses uoft-cs/cifar10 on HF hub
+  path: uoft-cs/cifar10          # kept for completeness (not used programmatically)
+  batch_size: 128
+  num_workers: 4
+
+model:
+  name: resnet18
+  lr: 0.1
+  weight_decay: 0.0005
+
+training:
+  epochs: 30
+  seed: 42
+  save_dir: "experiments"
+  early_stopping_patience: 7
+
+evaluation:
+  metrics: [accuracy, precision, recall, f1]
+
+# Additional experiment-specific knobs (parsed elsewhere)
+subset_selection:
+  method: GradMatchPB
+  initial_fraction: 0.1
+  progressive: false  # set true + override f0 etc. for P-AUTOMATA
+  f0: 0.05
+  gamma: 2
+  eps: 0.3
+  f_max: 0.3
+
+asha:
+  eta: 3
+  max_epochs: 30
+  num_configs: 100
+  seeds: [17, 29, 43]
+
+# End of file
