@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+PriorBand extends HyperBand (HB) by replacing its random sampling component with an Ensemble Sampling Policy (ESP) called Eπ. Eπ combines three sampling strategies: uniform random sampling (pU), prior-based sampling (pπ), and incumbent-based sampling (pˆλ). The proportion of random sampling (pU) geometrically decays with increasing fidelity (rung), while prior-based sampling (pπ) geometrically increases. Incumbent-based sampling is activated after the first SH bracket and at least one configuration is evaluated at maximum fidelity. It perturbs the current best configuration by selecting hyperparameters with a probability (fixed at 0.5) and applying Gaussian noise (σ=0.25) for continuous HPs, or a weighted discrete distribution for categorical HPs. The trade-off between prior-based and incumbent-based sampling is dynamically determined by computing weighted scores (Sπ, Sˆλ) based on the likelihood of top-performing configurations under both the expert prior and the incumbent's local distribution, normalizing these scores to set pπ and pˆλ. PriorBand's objective is to minimize an expensive objective function using a cheap multi-fidelity proxy, guided by a user-specified belief about the optimal configuration.
+
+# GitHub URLs List
+['https://github.com/automl/mf-prior-exp', 'https://github.com/fsschneider/HITYWorkshopPoll', 'https://github.com/google/init2winit', 'https://github.com/automl/HpBandSter']
+Output:
+{
+    "index": 0
+}
