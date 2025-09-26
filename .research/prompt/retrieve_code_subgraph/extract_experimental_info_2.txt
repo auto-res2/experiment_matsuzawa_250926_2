@@ -1,0 +1,886 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The proposed method, Interval Bound Interpolation (IBI), tackles few-task few-shot learning by leveraging Interval Bound Propagation (IBP) to preserve task manifold neighborhoods and generate artificial training tasks. For each training task, a small ϵ-neighborhood is defined around input samples. IBP is used to calculate axis-aligned lower (fθS(x,ϵ)) and upper (fθS(x,ϵ)) bounds for the feature embeddings (fθS) of these neighborhoods. The learning objective minimizes a dynamically weighted sum of three losses: the standard cross-entropy classification loss (LCE) and two novel losses (LLB, LUB) that minimize the Euclidean distances between the feature embedding and its respective IBP bounds, ensuring neighborhood compactness. Artificial tasks are created by interpolating between original tasks' feature embeddings and their IBP bounds using a Beta distribution for mixing coefficients (λk) and a random choice (νk) for upper or lower bound. The overall loss function dynamically adjusts weights for LCE, LLB, and LUB using a softmax over their current values, controlled by a hyperparameter γ. The framework is integrated with and evaluated on both Model-Agnostic Meta-Learning (MAML) and Prototypical Networks (ProtoNet). Theoretical analysis demonstrates that Lipschitz networks ensure bounded IBP, and a generalization bound shows the method's excess risk behaves approximately linearly with the perturbation parameter ϵ, circumventing the curse of dimensionality.
+
+# Repository Content
+File Path: img_data_process.py
+Content:
+import os
+import random
+
+from PIL import Image
+import numpy as np
+import torch
+
+def read_dataset(data_dir, val_presence=True):
+
+    # Read the image dataset.
+
+    if val_presence is True:
+        return tuple(_read_classes(os.path.join(data_dir, x)) for x in ['train', 'val', 'test'])
+    else:
+        return tuple(_read_classes(os.path.join(data_dir, x)) for x in ['train', 'test', 'test'])
+
+def _read_classes(dir_path):
+    
+    # Read the class directories in a train/val/test directory.
+    # Images should be in ".jpg" format.
+    
+    return [ImageProcessClass(os.path.join(dir_path, f)) for f in os.listdir(dir_path)]
+
+class ImageProcessClass:
+    
+    # Loading and using the image dataset.
+    # To use these APIs, you should prepare a directory that
+    # contains three sub-directories: train, test, and val.
+    
+    def __init__(self, dir_path):
+        self.dir_path = dir_path
+        self._cache = {}
+
+    def sample(self, num_images):
+
+        # Sample images (as pytorch tensor) from the class.
+
+        names = [f for f in os.listdir(self.dir_path) if f.endswith('.jpg')]
+        random.shuffle(names)
+        images = []
+        for name in names[:num_images]:
+            images.append(self._read_image(name))
+        return images
+
+    def _read_image(self, name):
+
+        # For reading images and transformations as necessary.
+        # Image resolution is set to 84x84.
+
+        if name in self._cache:
+            return self._cache[name]
+        with open(os.path.join(self.dir_path, name), 'rb') as in_file:
+            img = Image.open(in_file).resize((84, 84)).convert('RGB')
+            img = np.array(img).astype('float32') / 0xff
+            img =np.rollaxis(img, 2, 0)
+            self._cache[name] = torch.tensor(img)
+            return self._read_image(name)
+
+File Path: run_learner.py
+Content:
+import random
+import os 
+import sys
+import numpy as np
+import torch
+
+import argparse
+from img_data_process import read_dataset
+from datetime import datetime
+from copy import deepcopy
+
+from src.models import NetworkModel
+from src.eval_model import bulk_evaluate
+from src.train_model import train
+from src.learners import Learner
+
+def argument_parser():
+    # Get an argument parser for a training script.
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--dataset', help='name of dataset', default=None)
+    parser.add_argument('--algorithm', help='name of algorithm', default=None)
+    parser.add_argument('--seed', help='random seed', default=0, type=int)
+    parser.add_argument('--order', help='order for MAML and variants.', default=None, type=int)
+    parser.add_argument('--classes', help='number of classes per inner task', default=None, type=int)
+    parser.add_argument('--shots', help='number of examples per class', default=None, type=int)
+    parser.add_argument('--meta-shots', help='shots for meta update', default=None, type=int)
+    parser.add_argument('--inner-iters', help='inner iterations', default=None, type=int)
+    parser.add_argument('--learning-rate',help='inner loop learning rate', default=None, type=float)
+    parser.add_argument('--meta-step', help='outer loop learning rate', default=None, type=float)
+    parser.add_argument('--meta-batch', help='meta-training batch size', default=None, type=int)
+    parser.add_argument('--meta-iters', help='meta-training iterations', default=None, type=int)
+    parser.add_argument('--eval-iters', help='evaluation inner iterations', default=None, type=int)
+    parser.add_argument('--eval-samples', help='evaluation samples', default=None, type=int)
+    parser.add_argument('--eval-interval',help='evaluation interval during training', default=None, type=int)
+    parser.add_argument('--eval-interval-sample',help='evaluation samples during training', default=None, type=int)
+    parser.add_argument('--ibp-eps', help='IBP neighborhood size', default=0, type=float)
+    parser.add_argument('--softmax-temp', help='softmax temperature', default=None, type=float)
+    parser.add_argument('--only-evaluation', help='for only evaluation', action='store_true', default=False)
+    parser.add_argument('--checkpoint', help='load saved checkpoint from path', default=None)
+    parser.add_argument('--test-iters', help='number of evaluations', default=None, type=int)
+    parser.add_argument('--beta-a', help='beta distrebution parameter a', default=None, type=float)
+    parser.add_argument('--beta-b', help='beta distribution parameter b', default=None, type=float)
+    parser.add_argument('--mixup', help='set to use mixup task', action='store_true', default=False)
+    parser.add_argument('--ibp-layers', help='number layer to perform IBP/IBI', default=None, type=int)
+    return parser
+
+def model_kwargs(parsed_args):
+    
+    # Parameters used for initializing the learner.
+
+    return {
+        'update_lr': parsed_args.learning_rate,
+        'meta_step_size': parsed_args.meta_step,
+        'beta_a': parsed_args.beta_a,
+        'beta_b': parsed_args.beta_b,
+        'softmax_temp': parsed_args.softmax_temp
+    }
+
+def train_kwargs(parsed_args):
+    
+    # Parameters used for training.
+
+    return {
+        'order': parsed_args.order,
+        'num_classes': parsed_args.classes,
+        'num_shots': parsed_args.shots,
+        'meta_shots': parsed_args.meta_shots,
+        'inner_iters': parsed_args.inner_iters,
+        'meta_batch_size': parsed_args.meta_batch,
+        'meta_iters': parsed_args.meta_iters,
+        'eval_inner_iters': parsed_args.eval_iters,
+        'eval_interval': parsed_args.eval_interval,
+        'eval_interval_sample': parsed_args.eval_interval_sample,
+        'ibp_epsilon': parsed_args.ibp_eps,
+        'mixup': parsed_args.mixup,
+        'ibp_layers': parsed_args.ibp_layers
+    }
+
+def evaluate_kwargs(parsed_args):
+    
+    # Parameters used for evaluation over multiple tasks.
+
+    return {
+        'num_classes': parsed_args.classes,
+        'num_shots': parsed_args.shots,
+        'eval_inner_iters': parsed_args.eval_iters,
+        'num_samples': parsed_args.eval_samples
+    }
+
+def main():
+    
+    args = argument_parser().parse_args()
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    # Edit here according to need.
+    DATA_DIR = '' + args.dataset
+
+    # Create directory for storing results and initiate logging.
+    if os.path.exists(os.path.join(DATA_DIR, 'val')):
+        val_presence = True
+        print("Validation set is present.")
+    else:
+        val_presence = False
+        print("Validation set is not found. Exiting.")
+        sys.exit()
+
+    time_string = datetime.now().strftime("%m%d%Y_%H:%M:%S")
+    output_folder = args.dataset + '_' + args.algorithm + '_output_folder_' + time_string
+    output_file = output_folder + '/' + 'log_' + time_string + '.txt'
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    with open(output_file, 'a+') as fp:
+        print('\n'.join(f'{k}={v}' for k, v in vars(args).items()), file=fp)
+
+    device = torch.device('cuda')
+
+    # Instantiate the dataset.
+    train_set, val_set, test_set = read_dataset(DATA_DIR, val_presence)
+
+    # Instantiate the learner
+    model=NetworkModel(args.classes)
+
+    learner = Learner(model, device, **model_kwargs(args))
+
+    # Perform training or evaluation as per need.
+    if args.only_evaluation is False:
+        train(learner, train_set, val_set, output_file, output_folder, **train_kwargs(args))
+    else:
+        assert args.checkpoint is not None, 'For evaluating without training please provide a checkpoint'
+        print('Evaluating...')
+        
+        res_file = output_folder + '/' + 'test_performance_' + time_string + '_.txt'
+        with open(res_file, 'a+') as fp:
+            print('Evalulation checkpoint: ' + args.checkpoint, file=fp)
+
+        checkpoint_model = torch.load(args.checkpoint, map_location='cuda:0')
+        learner.net.load_state_dict(checkpoint_model['model_state'])
+        learner.meta_optim.load_state_dict(checkpoint_model['meta_optim_state'])
+
+        train_accuracy, val_accuracy, test_accuracy = [], [], []
+        train_cnf, val_cnf, test_cnf = [], [], []
+
+        for ii in range(args.test_iters):
+
+            train_acc, train_div = bulk_evaluate(learner, train_set, **evaluate_kwargs(args))
+            val_acc, val_div = bulk_evaluate(learner, val_set, **evaluate_kwargs(args))
+            test_acc, test_div = bulk_evaluate(learner, test_set, **evaluate_kwargs(args))
+            
+            train_accuracy.append(train_acc)
+            val_accuracy.append(val_acc)
+            test_accuracy.append(test_acc)
+
+            train_cnf.append(train_div)
+            val_cnf.append(val_div)
+            test_cnf.append(test_div)
+
+            with open(res_file, 'a+') as fp:
+                print('Test iteration: ' + str(ii + 1), file=fp)
+                print('Train accuracy: ' + str(train_accuracy[-1]) + ' +/- ' + str(train_cnf[-1]), file=fp)
+                print('Validation accuracy: ' + str(val_accuracy[-1]) + ' +/- ' + str(val_cnf[-1]), file=fp)
+                print('Test accuracy: ' + str(test_accuracy[-1]) + ' +/- ' + str(test_cnf[-1]) + '\n', file=fp)
+
+        save_path = output_folder + '/' + 'results' + '.npz'
+        train_accuracy = np.array(train_accuracy)
+        val_accuracy = np.array(val_accuracy)
+        test_accuracy = np.array(test_accuracy)
+
+        train_cnf = np.array(train_cnf)
+        val_cnf = np.array(val_cnf)
+        test_cnf = np.array(test_cnf)
+        
+        np.savez(save_path, train_accuracy=train_accuracy, val_accuracy=val_accuracy, 
+            test_accuracy=test_accuracy, train_confidence=train_cnf, val_confidence=val_cnf, 
+            test_confidence=test_cnf)
+
+if __name__ == '__main__':
+    main()
+
+File Path: src/eval_model.py
+Content:
+"""
+Helpers for evaluating models.
+"""
+import numpy as np
+from .learners import Learner
+
+def bulk_evaluate(learner,
+            dataset,
+            num_classes=5,
+            num_shots=5,
+            eval_inner_iters=10,
+            num_samples=10000):
+    
+    # For evaluating the learner on a set of tasks.
+    total_correct = []
+    for _ in range(num_samples):
+        total_correct.append(learner.evaluate(dataset, 
+                        num_classes=num_classes, num_shots=num_shots,
+                        inner_iters=eval_inner_iters))
+    
+    total_accuracies = np.array(total_correct) / num_classes
+    test_accuracy = total_accuracies.sum() / num_samples
+    test_cnf = np.std(total_accuracies) / np.sqrt(num_samples)
+
+    # For confidence interval 0.95%
+    # z_score = 1.96 
+    # test_cnf = z_score * test_cnf 
+
+    return test_accuracy, test_cnf
+
+File Path: src/learners.py
+Content:
+import random
+
+import torch
+import torch.nn.functional as F
+from torch import optim
+import numpy as np
+
+import torch.optim as optim
+from copy import deepcopy
+from collections import OrderedDict
+
+class Learner:
+
+    # Base Learner class for MAML and IBP/IBI variants.
+
+    def __init__(self, model, device, update_lr, meta_step_size, beta_a, beta_b, softmax_temp):
+
+        # Initialization.
+        self.device = device
+        self.net = model.to(self.device)
+        self.meta_optim = optim.Adam(self.net.parameters(), lr=meta_step_size)
+        self.update_lr = update_lr
+        self.beta_a, self.beta_b = beta_a, beta_b
+        self.softmax_temp = softmax_temp
+
+    def train_step(self,
+                dataset,
+                order,
+                num_classes,
+                num_shots,
+                meta_shots,
+                inner_iters,
+                meta_batch_size,
+                ibp_epsilon,
+                mixup,
+                ibp_layers):
+        
+        # Training function for MAML, MAML+IBP, and MAML+IBI learners.
+
+        # For record keeping
+        upper_loss_rec, lower_loss_rec, task_loss_rec, total_loss_rec = 0, 0, 0, 0
+
+        # Triigers FOMAML and variants if required.
+        create_graph, retain_graph = True, True
+        if order == 1:
+            create_graph, retain_graph = False, False
+
+        self.meta_optim.zero_grad()
+
+        if mixup is True:
+            random_task = np.random.rand(0, meta_batch_size)
+
+        # Iterate over tasks in a meta-batch
+        for task_ind in range(meta_batch_size):
+            
+            fast_weight = OrderedDict(self.net.named_parameters())
+
+            train_set, test_set = _split_train_test(
+                _sample_mini_dataset(dataset, num_classes, num_shots+meta_shots), test_shots=meta_shots)
+
+            # Support set
+            inputs, labels = zip(*train_set)
+            inputs = torch.stack(inputs).to(self.device)
+            labels = torch.tensor(labels).to(self.device)
+
+            # Fix ordering
+            labels, sort_index = torch.sort(labels)
+            inputs = inputs[sort_index]
+            
+            inputs_cat = torch.cat([inputs+ibp_epsilon, inputs, inputs-ibp_epsilon], 0)
+
+            # Fast adaptation steps
+            for _ in range(inner_iters):
+
+                if mixup is True and task_ind == random_task:
+                    # For MAML+IBI
+                    _, logits = self.net.functional_forward(inputs_cat, fast_weight, 
+                        ibp_layers, mixup, num_classes, self.beta_a, self.beta_b)
+                
+                    b_size = logits.shape[0]//2
+                    logits_o = logits[:b_size]
+                    logits_ulo = logits[b_size:]
+
+                    fast_loss = (F.cross_entropy(logits_o, labels) + 
+                        F.cross_entropy(logits_ulo, labels))/2
+                else:
+                    # For MAML and MAML+IBP
+                    _, logits = self.net.functional_forward(inputs, fast_weight, 
+                        None, False, None, None, None)
+
+                    fast_loss = F.cross_entropy(logits, labels)
+
+                fast_gradients = torch.autograd.grad(fast_loss, fast_weight.values(),
+                    create_graph=create_graph)
+
+                fast_weight = OrderedDict(
+                    (name, param - self.update_lr * grad_param)
+                    for ((name, param), grad_param) in zip(fast_weight.items(), fast_gradients))
+            
+            # Query set
+            inputs, labels = zip(*test_set)
+            inputs = torch.stack(inputs).to(self.device)
+            labels = torch.tensor(labels).to(self.device)
+
+            # Fix ordering
+            labels, sort_index = torch.sort(labels)
+            inputs = inputs[sort_index]
+
+            if ibp_layers is None:
+                # Vanilla MAML
+                _, logits = self.net.functional_forward(inputs, fast_weight, 
+                    None, False, None, None, None)
+                total_loss = F.cross_entropy(logits, labels)
+                task_loss_rec = task_loss_rec + total_loss.item()
+                total_loss_rec = total_loss_rec + total_loss.item()
+
+            else:
+                # For MAML+IBP and MAML+IBI
+                inputs_cat = torch.cat([inputs+ibp_epsilon, inputs, inputs-ibp_epsilon], 0)
+
+                if mixup is True and task_ind == random_task:
+                    # For MAML+IBI
+                    ibp_estimate, logits = self.net.functional_forward(
+                        inputs_cat, fast_weight, ibp_layers, mixup, num_classes, 
+                        self.beta_a, self.beta_b)
+                    
+                    b_size = logits.shape[0]//2
+                    logits_o = logits[:b_size]
+                    logits_ulo = logits[b_size:]
+
+                    task_loss = (F.cross_entropy(logits_o, labels) + 
+                        F.cross_entropy(logits_ulo, labels))/2   
+                else:
+                    # For MAML+IBP
+                    ibp_estimate, logits = self.net.functional_forward(
+                        inputs_cat, fast_weight, ibp_layers, False, None, None, None)
+
+                    task_loss = F.cross_entropy(logits, labels)
+
+                # Find the propagated bounds
+                b_size = ibp_estimate.shape[0]//3
+
+                ibp_estimate_u = ibp_estimate[:b_size]
+                ibp_estimate_o = ibp_estimate[b_size:2*b_size]
+                ibp_estimate_l = ibp_estimate[2*b_size:]
+
+                # Calculate $\mathcal{L}_{UB}$ and $\mathcal{L}_{LB}.
+                upper_loss = F.mse_loss(ibp_estimate_u, ibp_estimate_o)
+                lower_loss = F.mse_loss(ibp_estimate_l, ibp_estimate_o)
+
+                # Dynamic weighting of losses
+                concat_loss = torch.cat([task_loss.unsqueeze(0),
+                    upper_loss.unsqueeze(0), lower_loss.unsqueeze(0)], 0)
+
+                weights = F.softmax(concat_loss/self.softmax_temp, dim=0)
+                total_loss = torch.sum(concat_loss * weights)
+                
+                # Record keeping
+                upper_loss_rec = upper_loss_rec + upper_loss.item()
+                lower_loss_rec = lower_loss_rec + lower_loss.item()
+                task_loss_rec = task_loss_rec + task_loss.item()
+                total_loss_rec = total_loss_rec + total_loss.item()
+            
+            total_loss.backward(retain_graph=retain_graph)
+
+        # Averaging the loss over meta batches
+        for params in self.net.parameters():
+            params.grad = params.grad / meta_batch_size
+
+        # update the meta learner parameters
+        self.meta_optim.step()
+        self.meta_optim.zero_grad()
+
+        upper_loss_rec = upper_loss_rec/meta_batch_size
+        lower_loss_rec = lower_loss_rec/meta_batch_size
+        task_loss_rec = task_loss_rec/meta_batch_size
+        total_loss_rec = total_loss_rec/meta_batch_size
+
+        return upper_loss_rec, lower_loss_rec, task_loss_rec, total_loss_rec
+
+    def evaluate(self,
+                dataset,
+                num_classes,
+                num_shots,
+                inner_iters):
+
+        # Run a single evaluation of the model.
+
+        # Preserve currently trained model.
+        old_state = deepcopy(self.net.state_dict())
+        fast_weight = OrderedDict(self.net.named_parameters())
+
+        train_set, test_set = _split_train_test(_sample_mini_dataset(dataset, num_classes, num_shots+1))
+
+        # Support set
+        inputs, labels = zip(*train_set)
+        inputs = (torch.stack(inputs)).to(self.device)
+        labels = (torch.tensor(labels)).to(self.device)
+
+        # Fast adaptation
+        for _ in range(inner_iters):
+
+            _, logits = self.net.functional_forward(inputs, fast_weight, 
+                None, False, None, None, None)
+            fast_loss = F.cross_entropy(logits, labels)
+            fast_gradients = torch.autograd.grad(fast_loss, fast_weight.values())
+
+            fast_weight = OrderedDict(
+                (name, param - self.update_lr * grad_param)
+                for ((name, param), grad_param) in zip(fast_weight.items(), fast_gradients))
+
+        # Query set
+        inputs, labels = zip(*test_set)
+        inputs = (torch.stack(inputs)).to(self.device)
+        labels = (torch.tensor(labels)).to(self.device)
+
+        # Inference
+        _, logits = self.net.functional_forward(inputs, fast_weight, 
+            None, False, None, None, None)
+        test_preds = (F.softmax(logits, dim=1)).argmax(dim=1)
+
+        # Accuracy
+        num_correct = torch.eq(test_preds, labels).sum()
+
+        # Return network to original state for safety.
+        self.net.load_state_dict(old_state)
+
+        return num_correct.item()
+
+def _sample_mini_dataset(dataset, num_classes, num_shots):
+    
+    # Sample a few shot task from a dataset.
+
+    shuffled = list(dataset)
+    random.shuffle(shuffled)
+    for class_idx, class_obj in enumerate(shuffled[:num_classes]):
+        for sample in class_obj.sample(num_shots):
+            yield (sample, class_idx)
+
+def _mini_batches(samples, batch_size, num_batches):
+    
+    # Generate mini-batches from some data.
+
+    samples = list(samples)
+    cur_batch = []
+    batch_count = 0
+    while True:
+        random.shuffle(samples)
+        for sample in samples:
+            cur_batch.append(sample)
+            if len(cur_batch) < batch_size:
+                continue
+            yield cur_batch
+            cur_batch = []
+            batch_count += 1
+            if batch_count == num_batches:
+                return
+
+def _split_train_test(samples, test_shots=1):
+    
+    # Split a few-shot task into a train and a test set.
+
+    train_set = list(samples)
+    test_set = []
+    labels = set(item[1] for item in train_set)
+    for _ in range(test_shots):
+        for label in labels:
+            for i, item in enumerate(train_set):
+                if item[1] == label:
+                    del train_set[i]
+                    test_set.append(item)
+                    break
+    if len(test_set) < len(labels) * test_shots:
+        raise IndexError('not enough examples of each class for test set')
+    return train_set, test_set
+
+File Path: src/models.py
+Content:
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+
+# A regular 4-CONV network
+class NetworkModel(nn.Module):
+
+    def __init__(self, k_way):
+
+        # Initialize the network layers.
+
+        super(NetworkModel, self).__init__()
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=(1, 1))
+        self.batch1 = nn.BatchNorm2d(64, track_running_stats=False)
+
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=(1, 1))
+        self.batch2 = nn.BatchNorm2d(64, track_running_stats=False)
+
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=(1, 1))
+        self.batch3 = nn.BatchNorm2d(64, track_running_stats=False)
+
+        self.conv4 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=(1, 1))
+        self.batch4 = nn.BatchNorm2d(64, track_running_stats=False)
+
+        self.lin1 = nn.Linear(64*5*5, k_way)
+
+    def forward(self, x):
+
+        # A forward function only for reference.
+        
+        x = F.relu(F.max_pool2d(self.batch1(self.conv1(x)), 2))
+        x = F.relu(F.max_pool2d(self.batch2(self.conv2(x)), 2))
+        x = F.relu(F.max_pool2d(self.batch3(self.conv3(x)), 2))
+        x = F.relu(F.max_pool2d(self.batch4(self.conv4(x)), 2))
+        
+        x = x.view(-1, 64*5*5)
+        x = self.lin1(x)
+        
+        return x
+
+    def functional_forward(self, x, 
+        weight_dict, 
+        layer_index=None, 
+        mixup_flag=None, 
+        k_way=None,
+        beta_a=None,
+        beta_b=None):
+
+        # A functional forward that will actually be used for all requirements. 
+        # It only uses functionals thus explicitly needs the weights to be passes. 
+        # The functionals can use the regular layer function or their IBP form as required. 
+
+        robust = True
+        if layer_index is None:
+            y, robust = None, False
+
+        # Block 1
+        x = robust_conv_forward(
+            x, weight_dict['conv1.weight'], weight_dict['conv1.bias'], stride=1, padding=(1, 1), robust=robust)
+        x = robust_batch_norm_forward(
+            x, weight_dict['batch1.weight'], weight_dict['batch1.bias'], robust=robust)
+        x = F.max_pool2d(x, kernel_size=2, stride=2)
+        x = F.relu(x)
+
+        if layer_index == 1:
+            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)
+
+        # Block 2
+        x = robust_conv_forward(
+            x, weight_dict['conv2.weight'], weight_dict['conv2.bias'], stride=1, padding=(1, 1), robust=robust)
+        x = robust_batch_norm_forward(
+            x, weight_dict['batch2.weight'], weight_dict['batch2.bias'], robust=robust)
+        x = F.max_pool2d(x, kernel_size=2, stride=2)
+        x = F.relu(x)
+
+        if layer_index == 2:
+            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)
+
+        # Block 3
+        x = robust_conv_forward(
+            x, weight_dict['conv3.weight'], weight_dict['conv3.bias'], stride=1, padding=(1, 1), robust=robust)
+        x = robust_batch_norm_forward(
+            x, weight_dict['batch3.weight'], weight_dict['batch3.bias'], robust=robust)
+        x = F.max_pool2d(x, kernel_size=2, stride=2)
+        x = F.relu(x)
+
+        if layer_index == 3:
+            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)
+
+        # Block 4
+        x = robust_conv_forward(
+            x, weight_dict['conv4.weight'], weight_dict['conv4.bias'], stride=1, padding=(1, 1), robust=robust)
+        x = robust_batch_norm_forward(
+            x, weight_dict['batch4.weight'], weight_dict['batch4.bias'], robust=robust)
+        x = F.max_pool2d(x, kernel_size=2, stride=2)
+        x = F.relu(x)
+
+        if layer_index == 4:
+            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)
+
+        # Map to number of classes.
+        x = x.view(-1, 64*5*5)
+        x = F.linear(
+            x, weight=weight_dict['lin1.weight'], bias=weight_dict['lin1.bias'])
+
+        return y, x
+
+def robust_conv_forward(x, weight, bias, stride, padding, robust):
+
+    # Convolution function that can propagate interval bounds.
+
+    if robust is False:
+        # Regular convolution
+        x = F.conv2d(x, weight, bias, stride, padding)
+        return x
+
+    # Convolution propagating interval bounds.
+    b_size = x.shape[0]//3
+
+    input_p = x[:b_size]
+    input_o = x[b_size:2*b_size]
+    input_n = x[2*b_size:]
+
+    u = (input_p + input_n)/2
+    r = (input_p - input_n)/2
+
+    out_u = F.conv2d(u, weight, bias, stride, padding)
+    out_r = F.conv2d(r, torch.abs(weight), None, stride, padding)
+    out_o = F.conv2d(input_o, weight, bias, stride, padding)
+
+    return torch.cat([out_u + out_r, out_o, out_u - out_r], 0)
+
+def robust_batch_norm_forward(x, weight, bias, robust):
+
+    # Batch normalization function that can propagate interval bounds.
+
+    if robust is False:
+        # Regular batch normalization.
+        x = F.batch_norm(x, running_mean=None, running_var=None,
+            weight=weight, bias=bias, training=True)
+        return x
+
+    # Batch normalization propagating interval bounds.
+    b_size = x.shape[0]//3
+    eps = 1e-5
+
+    input_p = x[:b_size]
+    input_o = x[b_size:2*b_size]
+    input_n = x[2*b_size:]
+
+    # Equivalent to input_o.mean((0, 2, 3))
+    mean = input_o.transpose(0, 1).contiguous().view(
+        input_o.shape[1], -1).mean(1)
+    var = input_o.transpose(0, 1).contiguous().view(
+        input_o.shape[1], -1).var(1, unbiased=False)
+
+    # Element-wise multiplier
+    multiplier = torch.rsqrt(var + eps)
+    multiplier = multiplier * weight
+
+    offset = (-multiplier * mean) + bias
+
+    multiplier = multiplier.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+    offset = offset.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+
+    # Because the scale might be negative, we need to apply a strategy similar to linear
+    u = (input_p + input_n)/2
+    r = (input_p - input_n)/2
+
+    out_u = torch.mul(u, multiplier) + offset
+    out_r = torch.mul(r, torch.abs(multiplier))
+    out_o = torch.mul(input_o, multiplier) + offset
+
+    return torch.cat([out_u + out_r, out_o, out_u - out_r], 0)
+
+def intra_class_mixup(y, mixup_flag, k_way, beta_a, beta_b):
+    
+    # Perform interval bound interpolation
+    
+    robust = False
+    b_size = y.shape[0]//3
+    u = y[:b_size]
+    l = y[2*b_size:]
+    o = y[b_size:2*b_size]
+
+    if mixup_flag is True:
+
+        num_shots = b_size//k_way
+        mixup_params = np.repeat(np.random.beta(beta_a, beta_b, k_way), num_shots)
+        mixup_params = torch.tensor(mixup_params, dtype=torch.float).view(b_size, 1, 1, 1).to(y.device)
+
+        rand_ext = np.repeat(np.random.randint(0, 2, k_way), num_shots)
+        rand_ext = torch.tensor(rand_ext, dtype=torch.float).view(b_size, 1, 1, 1).to(y.device)
+
+        mixup_params_c = 1 - mixup_params
+        rand_ext_c = 1 - rand_ext
+
+        ulo = (mixup_params_c*o + 
+            mixup_params*rand_ext*u +
+            mixup_params*rand_ext_c*l)
+
+        x = torch.cat([o, ulo], 0)
+        return y, x, robust
+    
+    return y, o, robust
+
+File Path: src/train_model.py
+Content:
+import os
+import numpy as np
+
+import torch
+from .learners import Learner
+
+def train(learner,
+        train_set,
+        val_set,
+        model_output_file=None,
+        model_save_path=None,
+        order=None,
+        num_classes=None,
+        num_shots=None,
+        meta_shots=None,
+        inner_iters=None,
+        meta_batch_size=None,
+        meta_iters=None,
+        eval_inner_iters=None,
+        eval_interval=None,
+        eval_interval_sample=None,
+        ibp_epsilon=None,
+        mixup=False,
+        ibp_layers=None):
+    
+    # Train a model on a dataset.
+    train_accuracy, val_accuracy = [], []
+    upper_loss_store, lower_loss_store, task_loss_store, total_loss_store = [], [], [], []
+
+    # Loop over the training steps.
+    for i in range(meta_iters+1):
+        
+        # Find current value of interval coefficient.
+        cur_ibp_epsilon = eps_scheduler(i, meta_iters, ibp_epsilon)
+
+        # Train the learner for a step.
+        upper_loss, lower_loss, task_loss, total_loss = learner.train_step(train_set, order=order,
+                                                            num_classes=num_classes, num_shots=num_shots,
+                                                            meta_shots=meta_shots,
+                                                            inner_iters=inner_iters,
+                                                            meta_batch_size=meta_batch_size,
+                                                            ibp_epsilon=cur_ibp_epsilon,
+                                                            mixup=mixup,
+                                                            ibp_layers=ibp_layers)
+        # Record losses
+        upper_loss_store.append(upper_loss)
+        lower_loss_store.append(lower_loss)
+        task_loss_store.append(task_loss)
+        total_loss_store.append(total_loss)
+        
+        if i % eval_interval == 0:
+            
+            # Perform intermediate evaluation.
+            total_correct = 0
+            for _ in range(eval_interval_sample):
+                total_correct = total_correct + learner.evaluate(train_set,
+                                                    num_classes=num_classes, num_shots=num_shots,
+                                                    inner_iters=eval_inner_iters)
+            
+            train_accuracy.append(total_correct / (eval_interval_sample * num_classes))
+
+            save_path = model_save_path + '/intermediate_' + str(i) + '_model.pt'
+
+            torch.save({'model_state': learner.net.state_dict(),
+                        'meta_optim_state': learner.meta_optim.state_dict()},
+                       save_path)
+
+            total_correct = 0
+            for _ in range(eval_interval_sample):
+                total_correct = total_correct + learner.evaluate(val_set,
+                                                    num_classes=num_classes, num_shots=num_shots,
+                                                    inner_iters=eval_inner_iters)
+            val_accuracy.append(total_correct / (eval_interval_sample * num_classes))
+
+            with open(model_output_file, 'a+') as fp:
+                print('batch %d: train=%f val=%f' % (i, 
+                    train_accuracy[-1], val_accuracy[-1]), file=fp)
+
+    # Intermediate record keeping.
+    res_save_path = model_save_path + '/' + 'intermediate_accuracies.npz'
+    loss_save_path = model_save_path + '/' + 'intermediates_losses.npz'
+
+    np.savez(res_save_path, train_accuracy=np.array(train_accuracy),
+        val_accuracy=np.array(val_accuracy))
+    
+    np.savez(loss_save_path, upper_loss=np.array(upper_loss_store),
+        lower_loss=np.array(lower_loss_store), task_loss=np.array(task_loss_store),
+        total_loss=np.array(total_loss_store))
+
+def eps_scheduler(i, meta_iters, ibp_epsilon):
+    
+    # Schedule the value of interval coefficient.
+
+    if i < meta_iters*0.9:
+        return (i / (meta_iters*0.9)) * ibp_epsilon
+
+    return ibp_epsilon
+
+        
+
+Output:
+{
+    "experimental_code": "File Path: src/learners.py\nContent:\nimport random\n\nimport torch\nimport torch.nn.functional as F\nfrom torch import optim\nimport numpy as np\n\nimport torch.optim as optim\nfrom copy import deepcopy\nfrom collections import OrderedDict\n\nclass Learner:\n\n    # Base Learner class for MAML and IBP/IBI variants.\n\n    def __init__(self, model, device, update_lr, meta_step_size, beta_a, beta_b, softmax_temp):\n\n        # Initialization.\n        self.device = device\n        self.net = model.to(self.device)\n        self.meta_optim = optim.Adam(self.net.parameters(), lr=meta_step_size)\n        self.update_lr = update_lr\n        self.beta_a, self.beta_b = beta_a, beta_b\n        self.softmax_temp = softmax_temp\n\n    def train_step(self,\n                dataset,\n                order,\n                num_classes,\n                num_shots,\n                meta_shots,\n                inner_iters,\n                meta_batch_size,\n                ibp_epsilon,\n                mixup,\n                ibp_layers):\n        \n        # Training function for MAML, MAML+IBP, and MAML+IBI learners.\n\n        # For record keeping\n        upper_loss_rec, lower_loss_rec, task_loss_rec, total_loss_rec = 0, 0, 0, 0\n\n        # Triigers FOMAML and variants if required.\n        create_graph, retain_graph = True, True\n        if order == 1:\n            create_graph, retain_graph = False, False\n\n        self.meta_optim.zero_grad()\n\n        if mixup is True:\n            random_task = np.random.rand(0, meta_batch_size)\n\n        # Iterate over tasks in a meta-batch\n        for task_ind in range(meta_batch_size):\n            \n            fast_weight = OrderedDict(self.net.named_parameters())\n\n            train_set, test_set = _split_train_test(\n                _sample_mini_dataset(dataset, num_classes, num_shots+meta_shots), test_shots=meta_shots)\n\n            # Support set\n            inputs, labels = zip(*train_set)\n            inputs = torch.stack(inputs).to(self.device)\n            labels = torch.tensor(labels).to(self.device)\n\n            # Fix ordering\n            labels, sort_index = torch.sort(labels)\n            inputs = inputs[sort_index]\n            \n            inputs_cat = torch.cat([inputs+ibp_epsilon, inputs, inputs-ibp_epsilon], 0)\n\n            # Fast adaptation steps\n            for _ in range(inner_iters):\n\n                if mixup is True and task_ind == random_task:\n                    # For MAML+IBI\n                    _, logits = self.net.functional_forward(inputs_cat, fast_weight, \n                        ibp_layers, mixup, num_classes, self.beta_a, self.beta_b)\n                \n                    b_size = logits.shape[0]//2\n                    logits_o = logits[:b_size]\n                    logits_ulo = logits[b_size:]\n\n                    fast_loss = (F.cross_entropy(logits_o, labels) + \n                        F.cross_entropy(logits_ulo, labels))/2\n                else:\n                    # For MAML and MAML+IBP\n                    _, logits = self.net.functional_forward(inputs, fast_weight, \n                        None, False, None, None, None)\n\n                    fast_loss = F.cross_entropy(logits, labels)\n\n                fast_gradients = torch.autograd.grad(fast_loss, fast_weight.values(),\n                    create_graph=create_graph)\n\n                fast_weight = OrderedDict(\n                    (name, param - self.update_lr * grad_param)\n                    for ((name, param), grad_param) in zip(fast_weight.items(), fast_gradients))\n            \n            # Query set\n            inputs, labels = zip(*test_set)\n            inputs = torch.stack(inputs).to(self.device)\n            labels = torch.tensor(labels).to(self.device)\n\n            # Fix ordering\n            labels, sort_index = torch.sort(labels)\n            inputs = inputs[sort_index]\n\n            if ibp_layers is None:\n                # Vanilla MAML\n                _, logits = self.net.functional_forward(inputs, fast_weight, \n                    None, False, None, None, None)\n                total_loss = F.cross_entropy(logits, labels)\n                task_loss_rec = task_loss_rec + total_loss.item()\n                total_loss_rec = total_loss_rec + total_loss.item()\n\n            else:\n                # For MAML+IBP and MAML+IBI\n                inputs_cat = torch.cat([inputs+ibp_epsilon, inputs, inputs-ibp_epsilon], 0)\n\n                if mixup is True and task_ind == random_task:\n                    # For MAML+IBI\n                    ibp_estimate, logits = self.net.functional_forward(\n                        inputs_cat, fast_weight, ibp_layers, mixup, num_classes, \n                        self.beta_a, self.beta_b)\n                    \n                    b_size = logits.shape[0]//2\n                    logits_o = logits[:b_size]\n                    logits_ulo = logits[b_size:]\n\n                    task_loss = (F.cross_entropy(logits_o, labels) + \n                        F.cross_entropy(logits_ulo, labels))/2   \n                else:\n                    # For MAML+IBP\n                    ibp_estimate, logits = self.net.functional_forward(\n                        inputs_cat, fast_weight, ibp_layers, False, None, None, None)\n\n                    task_loss = F.cross_entropy(logits, labels)\n\n                # Find the propagated bounds\n                b_size = ibp_estimate.shape[0]//3\n\n                ibp_estimate_u = ibp_estimate[:b_size]\n                ibp_estimate_o = ibp_estimate[b_size:2*b_size]\n                ibp_estimate_l = ibp_estimate[2*b_size:]\n\n                # Calculate $\\mathcal{L}_{UB}$ and $\\mathcal{L}_{LB}.\n                upper_loss = F.mse_loss(ibp_estimate_u, ibp_estimate_o)\n                lower_loss = F.mse_loss(ibp_estimate_l, ibp_estimate_o)\n\n                # Dynamic weighting of losses\n                concat_loss = torch.cat([task_loss.unsqueeze(0),\n                    upper_loss.unsqueeze(0), lower_loss.unsqueeze(0)], 0)\n\n                weights = F.softmax(concat_loss/self.softmax_temp, dim=0)\n                total_loss = torch.sum(concat_loss * weights)\n                \n                # Record keeping\n                upper_loss_rec = upper_loss_rec + upper_loss.item()\n                lower_loss_rec = lower_loss_rec + lower_loss.item()\n                task_loss_rec = task_loss_rec + task_loss.item()\n                total_loss_rec = total_loss_rec + total_loss.item()\n            \n            total_loss.backward(retain_graph=retain_graph)\n\n        # Averaging the loss over meta batches\n        for params in self.net.parameters():\n            params.grad = params.grad / meta_batch_size\n\n        # update the meta learner parameters\n        self.meta_optim.step()\n        self.meta_optim.zero_grad()\n\n        upper_loss_rec = upper_loss_rec/meta_batch_size\n        lower_loss_rec = lower_loss_rec/meta_batch_size\n        task_loss_rec = task_loss_rec/meta_batch_size\n        total_loss_rec = total_loss_rec/meta_batch_size\n\n        return upper_loss_rec, lower_loss_rec, task_loss_rec, total_loss_rec\n\nFile Path: src/models.py\nContent:\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nimport numpy as np\n\n# A regular 4-CONV network\nclass NetworkModel(nn.Module):\n\n    def __init__(self, k_way):\n\n        # Initialize the network layers.\n\n        super(NetworkModel, self).__init__()\n\n        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=(1, 1))\n        self.batch1 = nn.BatchNorm2d(64, track_running_stats=False)\n\n        self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=(1, 1))\n        self.batch2 = nn.BatchNorm2d(64, track_running_stats=False)\n\n        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=(1, 1))\n        self.batch3 = nn.BatchNorm2d(64, track_running_stats=False)\n\n        self.conv4 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=(1, 1))\n        self.batch4 = nn.BatchNorm2d(64, track_running_stats=False)\n\n        self.lin1 = nn.Linear(64*5*5, k_way)\n\n    def forward(self, x):\n\n        # A forward function only for reference.\n        \n        x = F.relu(F.max_pool2d(self.batch1(self.conv1(x)), 2))\n        x = F.relu(F.max_pool2d(self.batch2(self.conv2(x)), 2))\n        x = F.relu(F.max_pool2d(self.batch3(self.conv3(x)), 2))\n        x = F.relu(F.max_pool2d(self.batch4(self.conv4(x)), 2))\n        \n        x = x.view(-1, 64*5*5)\n        x = self.lin1(x)\n        \n        return x\n\n    def functional_forward(self, x, \n        weight_dict, \n        layer_index=None, \n        mixup_flag=None, \n        k_way=None,\n        beta_a=None,\n        beta_b=None):\n\n        # A functional forward that will actually be used for all requirements. \n        # It only uses functionals thus explicitly needs the weights to be passes. \n        # The functionals can use the regular layer function or their IBP form as required. \n\n        robust = True\n        if layer_index is None:\n            y, robust = None, False\n\n        # Block 1\n        x = robust_conv_forward(\n            x, weight_dict['conv1.weight'], weight_dict['conv1.bias'], stride=1, padding=(1, 1), robust=robust)\n        x = robust_batch_norm_forward(\n            x, weight_dict['batch1.weight'], weight_dict['batch1.bias'], robust=robust)\n        x = F.max_pool2d(x, kernel_size=2, stride=2)\n        x = F.relu(x)\n\n        if layer_index == 1:\n            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)\n\n        # Block 2\n        x = robust_conv_forward(\n            x, weight_dict['conv2.weight'], weight_dict['conv2.bias'], stride=1, padding=(1, 1), robust=robust)\n        x = robust_batch_norm_forward(\n            x, weight_dict['batch2.weight'], weight_dict['batch2.bias'], robust=robust)\n        x = F.max_pool2d(x, kernel_size=2, stride=2)\n        x = F.relu(x)\n\n        if layer_index == 2:\n            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)\n\n        # Block 3\n        x = robust_conv_forward(\n            x, weight_dict['conv3.weight'], weight_dict['conv3.bias'], stride=1, padding=(1, 1), robust=robust)\n        x = robust_batch_norm_forward(\n            x, weight_dict['batch3.weight'], weight_dict['batch3.bias'], robust=robust)\n        x = F.max_pool2d(x, kernel_size=2, stride=2)\n        x = F.relu(x)\n\n        if layer_index == 3:\n            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)\n\n        # Block 4\n        x = robust_conv_forward(\n            x, weight_dict['conv4.weight'], weight_dict['conv4.bias'], stride=1, padding=(1, 1), robust=robust)\n        x = robust_batch_norm_forward(\n            x, weight_dict['batch4.weight'], weight_dict['batch4.bias'], robust=robust)\n        x = F.max_pool2d(x, kernel_size=2, stride=2)\n        x = F.relu(x)\n\n        if layer_index == 4:\n            y, x, robust = intra_class_mixup(x, mixup_flag, k_way, beta_a, beta_b)\n\n        # Map to number of classes.\n        x = x.view(-1, 64*5*5)\n        x = F.linear(\n            x, weight=weight_dict['lin1.weight'], bias=weight_dict['lin1.bias'])\n\n        return y, x\n\ndef robust_conv_forward(x, weight, bias, stride, padding, robust):\n\n    # Convolution function that can propagate interval bounds.\n\n    if robust is False:\n        # Regular convolution\n        x = F.conv2d(x, weight, bias, stride, padding)\n        return x\n\n    # Convolution propagating interval bounds.\n    b_size = x.shape[0]//3\n\n    input_p = x[:b_size]\n    input_o = x[b_size:2*b_size]\n    input_n = x[2*b_size:]\n\n    u = (input_p + input_n)/2\n    r = (input_p - input_n)/2\n\n    out_u = F.conv2d(u, weight, bias, stride, padding)\n    out_r = F.conv2d(r, torch.abs(weight), None, stride, padding)\n    out_o = F.conv2d(input_o, weight, bias, stride, padding)\n\n    return torch.cat([out_u + out_r, out_o, out_u - out_r], 0)\n\ndef robust_batch_norm_forward(x, weight, bias, robust):\n\n    # Batch normalization function that can propagate interval bounds.\n\n    if robust is False:\n        # Regular batch normalization.\n        x = F.batch_norm(x, running_mean=None, running_var=None,\n            weight=weight, bias=bias, training=True)\n        return x\n\n    # Batch normalization propagating interval bounds.\n    b_size = x.shape[0]//3\n    eps = 1e-5\n\n    input_p = x[:b_size]\n    input_o = x[b_size:2*b_size]\n    input_n = x[2*b_size:]\n\n    # Equivalent to input_o.mean((0, 2, 3))\n    mean = input_o.transpose(0, 1).contiguous().view(\n        input_o.shape[1], -1).mean(1)\n    var = input_o.transpose(0, 1).contiguous().view(\n        input_o.shape[1], -1).var(1, unbiased=False)\n\n    # Element-wise multiplier\n    multiplier = torch.rsqrt(var + eps)\n    multiplier = multiplier * weight\n\n    offset = (-multiplier * mean) + bias\n\n    multiplier = multiplier.unsqueeze(0).unsqueeze(2).unsqueeze(3)\n    offset = offset.unsqueeze(0).unsqueeze(2).unsqueeze(3)\n\n    # Because the scale might be negative, we need to apply a strategy similar to linear\n    u = (input_p + input_n)/2\n    r = (input_p - input_n)/2\n\n    out_u = torch.mul(u, multiplier) + offset\n    out_r = torch.mul(r, torch.abs(multiplier))\n    out_o = torch.mul(input_o, multiplier) + offset\n\n    return torch.cat([out_u + out_r, out_o, out_u - out_r], 0)\n\ndef intra_class_mixup(y, mixup_flag, k_way, beta_a, beta_b):\n    \n    # Perform interval bound interpolation\n    \n    robust = False\n    b_size = y.shape[0]//3\n    u = y[:b_size]\n    l = y[2*b_size:]\n    o = y[b_size:2*b_size]\n\n    if mixup_flag is True:\n\n        num_shots = b_size//k_way\n        mixup_params = np.repeat(np.random.beta(beta_a, beta_b, k_way), num_shots)\n        mixup_params = torch.tensor(mixup_params, dtype=torch.float).view(b_size, 1, 1, 1).to(y.device)\n\n        rand_ext = np.repeat(np.random.randint(0, 2, k_way), num_shots)\n        rand_ext = torch.tensor(rand_ext, dtype=torch.float).view(b_size, 1, 1, 1).to(y.device)\n\n        mixup_params_c = 1 - mixup_params\n        rand_ext_c = 1 - rand_ext\n\n        ulo = (mixup_params_c*o + \n            mixup_params*rand_ext*u +\n            mixup_params*rand_ext_c*l)\n\n        x = torch.cat([o, ulo], 0)\n        return y, x, robust\n    \n    return y, o, robust\n\nFile Path: src/train_model.py\nContent:\ndef eps_scheduler(i, meta_iters, ibp_epsilon):\n    \n    # Schedule the value of interval coefficient.\n\n    if i < meta_iters*0.9:\n        return (i / (meta_iters*0.9)) * ibp_epsilon\n\n    return ibp_epsilon",
+    "experimental_info": "The Interval Bound Interpolation (IBI) method's experimental settings are primarily configured via command-line arguments and an epsilon scheduler:\n\n1.  **IBP Epsilon (`--ibp-eps` / `ibp_epsilon`)**: Controls the neighborhood size \\(\\epsilon\\) for Interval Bound Propagation. The value is scheduled dynamically during training by the `eps_scheduler` function. For the first 90% of `meta_iters`, \\(\\epsilon\\) is linearly ramped up from 0 to the specified `ibp_epsilon` value. For the remaining 10% of training, it stays at the full `ibp_epsilon` value.\n2.  **Softmax Temperature (`--softmax-temp` / `softmax_temp`)**: Denoted as \\(\\gamma\\) in the method, this hyperparameter controls the temperature for the softmax function used in dynamically weighting the three loss components (cross-entropy, upper bound MSE, lower bound MSE).\n3.  **Beta Distribution Parameters (`--beta-a`, `--beta-b` / `beta_a`, `beta_b`)**: These parameters define the Beta distribution from which the mixing coefficients (\\(\\lambda_k\\)) are sampled for generating artificial tasks via Interval Bound Interpolation (IBI).\n4.  **Mixup Flag (`--mixup` / `mixup`)**: A boolean flag that, when set to `True`, enables the generation of artificial tasks using the IBI technique (mixup task).\n5.  **IBP Layers (`--ibp-layers` / `ibp_layers`)**: An integer specifying up to which layer in the network IBP/IBI should be performed. The `functional_forward` method in `NetworkModel` checks this `layer_index` to determine where to apply `intra_class_mixup` and where robust propagation (`robust_conv_forward`, `robust_batch_norm_forward`) is active. If `ibp_layers` is `None`, vanilla MAML without IBP/IBI is performed.\n6.  **Task Configuration**: The method is evaluated in a few-shot learning setting, where tasks are defined by `num_classes` (`--classes`) and `num_shots` (`--shots`) per class for the support set, and `meta_shots` (`--meta-shots`) for the query set. `meta_batch_size` (`--meta-batch`) specifies the number of tasks processed in a meta-batch."
+}
