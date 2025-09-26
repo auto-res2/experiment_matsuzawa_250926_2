@@ -1,0 +1,4267 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+PRD utilizes a neural network comprising an encoder (f) for feature extraction and a projection head (g) for mapping features to a latent space. The training objective is a combination of three main losses: 1. Supervised Contrastive Loss (LSC): Applied to incoming task data to learn robust representations by maximizing similarity within positive pairs and contrasting with negative pairs. 2. Prototype Learning without Contrasts (Lp): For each class, a prototype is initialized and optimized to represent its samples by maximizing similarity with their representations, using a stop-gradient operation to isolate this learning from representation updates and old prototypes. This loss is designed to be contrast-free to avoid interfering with previously learned classes. 3. Prototypes-Samples Similarity Distillation (Ld): A key novel component that minimizes the KL divergence between the softmax similarity distributions of past task prototypes to samples in the current mini-batch, comparing distributions from the previous and current model states. This ensures that the relative relationships between prototypes and samples are maintained, keeping older prototypes relevant.
+
+# Repository Content
+File Path: clhive/__init__.py
+Content:
+"""CLHive is a PyTorch framework for Continual Learning research.
+"""
+
+__name__ = "clhive"
+__version__ = "0.0.1"
+
+from clhive import config, data, loggers, methods, models, scenarios, utils
+
+from clhive.config import config_parser
+from clhive.data import ReplayBuffer
+from clhive.models import auto_model
+from clhive.methods import auto_method
+from clhive.utils import evaluators
+from clhive.utils.trainer import Trainer
+
+File Path: clhive/cli/__init__.py
+Content:
+
+File Path: clhive/cli/__main__.py
+Content:
+
+File Path: clhive/config/__init__.py
+Content:
+from .parser import config_parser
+from .configs import (
+    Config,
+    DataConfig,
+    MethodConfig,
+    TrainConfig,
+    EvalConfig,
+    OptimConfig,
+)
+
+File Path: clhive/config/configs.py
+Content:
+from dataclasses import dataclass
+from hydra.core.config_store import ConfigStore
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class DataConfig:
+    dataset: str = "cifar10"
+    root: str = "../cl-datasets/"
+    n_tasks: int = 5
+    mem_size: int = 0
+    download: Optional[bool] = True
+    smooth: Optional[bool] = False
+    n_workers: Optional[int] = 0
+    transform: Optional[str] = "base"
+    image_size: Optional[Tuple] = (3, 32, 32)
+    n_classes: Optional[int] = 10
+    n_classes_per_task: Optional[int] = 2
+
+
+@dataclass
+class MethodConfig:
+    name: str = "finetuning"
+    model: str = "resnet18"
+    nf: int = 32
+    use_snapshots: bool = False
+    save_snapshots: bool = False
+    snapshots_path: str = "./snapshots"
+
+
+@dataclass
+class TrainConfig:
+    scenario: str = "single_head"
+    batch_size: int = 32
+    buffer_batch_size: int = 32
+    n_epochs: int = 1
+    n_iters: int = 1
+    use_augs: bool = False
+
+
+@dataclass
+class EvalConfig:
+    scenario: str = "single_head"
+    batch_size: int = 32
+    probe_eval: bool = False  # instead of keep_training_data
+    cka_eval: bool = False
+    eval_layer: Optional[int] = 4
+    eval_every: Optional[int] = None
+    n_epochs: int = 1
+
+
+@dataclass
+class OptimConfig:
+    name: str = "sgd"
+    lr: float = 0.01
+    momentum: float = 0.9
+    weight_decay: float = 0.0001
+    lr_decay_rate: float = 0.1
+    lr_decay_epochs: str = "120,160"
+
+
+@dataclass
+class Config:
+    method: MethodConfig = MethodConfig()
+    data: DataConfig = DataConfig()
+    train: TrainConfig = TrainConfig()
+    eval: EvalConfig = EvalConfig()
+    optim: OptimConfig = OptimConfig()
+
+File Path: clhive/config/parser.py
+Content:
+import os
+import sys
+import hydra
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig
+
+from .configs import Config
+
+
+cs = ConfigStore.instance()
+cs.store(name="base_config", node=Config)
+
+
+def config_parser(config_path: str, config_name: str, job_name: str) -> DictConfig:
+    """[summary]
+    Args:
+        config_path (str): [description]
+        config_name (str): [description]
+        job_name (str): [description]
+    Returns:
+        DictConfig: [description]
+    """
+
+    overrides = sys.argv[1:]
+
+    override_run_id = [arg for arg in overrides if "unique_run_id=" in arg]
+    if len(override_run_id) > 0:
+        config_path = f"./checkpoints/{override_run_id[0].split('=')[1]}"
+        config_name = "config"
+
+    hydra.initialize_config_dir(
+        config_dir=os.path.abspath(config_path), job_name=job_name
+    )
+
+    cfg = hydra.compose(config_name=config_name, overrides=overrides)
+    return cfg
+
+File Path: clhive/data/__init__.py
+Content:
+import traceback
+from pathlib import Path
+
+from ..utils.registry_utils import import_all_modules
+
+from .continual_dataset import ContinualDataset
+
+
+FILE_ROOT = Path(__file__).parent
+
+DATASET_REGISTRY = {}
+DATASET_REGISTRY_TB = {}
+DATASET_CLASS_NAMES = set()
+DATASET_CLASS_NAMES_TB = {}
+
+
+def register_dataset(name, bypass_checks=False):
+    """Registers a :class:`ContinualDataset` subclass.
+
+    This decorator allows to instantiate a subclass of ContinualDataset
+    from a configuration file, even if the class itself is not
+    part of the framework. To use it, apply this decorator to a
+    ClassyDataset subclass like this:
+
+    .. code-block:: python
+      @register_dataset("my_dataset")
+      class MyDataset(ContinualDataset):
+          ...
+    To instantiate a dataset from a configuration file, see
+    :func:`build_dataset`.
+    """
+
+    def register_dataset_cls(cls):
+        if not bypass_checks:
+            if name in DATASET_REGISTRY:
+                msg = "Cannot register duplicate dataset ({}). Already registered at \n{}\n"
+                raise ValueError(msg.format(name, DATASET_REGISTRY_TB[name]))
+            if not issubclass(cls, ContinualDataset):
+                raise ValueError(
+                    f"Dataset ({name}: {cls.__name__}) must extend ContinualDataset"
+                )
+            if cls.__name__ in DATASET_CLASS_NAMES:
+                raise ValueError(
+                    f"Cannot register dataset with duplicate class name({cls.__name__}). Previously registered at \n{DATASET_CLASS_NAMES_TB[cls.__name__]}\n"
+                )
+        tb = "".join(traceback.format_stack())
+        DATASET_REGISTRY[name] = cls
+        DATASET_CLASS_NAMES.add(cls.__name__)
+        DATASET_REGISTRY_TB[name] = tb
+        DATASET_CLASS_NAMES_TB[cls.__name__] = tb
+        return cls
+
+    return register_dataset_cls
+
+
+def get_dataset(config, *args, **kwargs):
+    """Builds a :class:`ContinualDataset` from a config.
+
+    This assumes a 'name' key in the config which is used to determine what
+    dataset class to instantiate. For instance, a config `{"name": "my_dataset",
+    "folder": "/data"}` will find a class that was registered as "my_dataset"
+    (see :func:`register_dataset`) and call .from_config on it.
+    """
+    dataset = DATASET_REGISTRY[config["dataset"]].from_config(config, *args, **kwargs)
+    return dataset
+
+
+# automatically import any Python files in the data/ directory
+import_all_modules(FILE_ROOT, "clhive.data")
+
+# import transforms
+from .buffer import ReplayBuffer
+from .cifar import SplitCIFAR10, SplitCIFAR100
+from .mnist import SeqMNIST
+
+File Path: clhive/data/buffer.py
+Content:
+from typing import Dict, Optional, Union
+import numpy as np
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from collections import OrderedDict
+from collections.abc import Iterable
+
+from ..scenarios import ClassIncremental, TaskIncremental
+from ..utils.generic import *
+
+
+class ReplayBuffer(nn.Module):
+    """_summary_
+
+    Args:
+        nn (_type_): _description_
+    """
+
+    def __init__(
+        self,
+        capacity: int,
+        device: Optional[torch.device] = None,
+    ) -> "ReplayBuffer":
+        """_summary_
+
+        Args:
+            capacity (int): _description_
+            device (Optional[torch.device], optional): _description_. Defaults to None.
+
+        Returns:
+            ReplayBuffer: _description_
+        """
+
+        super(ReplayBuffer, self).__init__()
+
+        self.registered_buffers = []
+
+        self.capacity = capacity
+        self.current_index = 0
+        self.n_seen_so_far = 0
+
+        if device is None:
+            device = torch.device("cpu")
+        self.device = device
+
+        # defaults
+        self.add = self.add_reservoir
+        self.sample = self.sample_random
+
+    @property
+    def num_bits(self) -> int:
+        total = 0
+
+        for name in self.buffers:
+            buffer = getattr(self, name)
+
+            if buffer.dtype == torch.float32:
+                bits_per_item = 8 if name == "x" else 32
+            elif buffer.dtype == torch.int64:
+                bits_per_item = buffer.max().float().log2().clamp_(min=1).int().item()
+
+            total += bits_per_item * buffer.numel()
+
+        return total
+
+    def __len__(self) -> int:
+        return self.current_index
+
+    def add_buffer(self, name: str, dtype: torch.dtype, size: int) -> None:
+        """Used to add extra containers (e.g. for logit storage)
+
+        Args:
+            name (str): _description_
+            dtype (torch.dtype): _description_
+            size (int): _description_
+        """
+
+        tmp = torch.zeros(size=(self.capacity,) + size, dtype=dtype).to(self.device)
+        self.register_buffer(name, tmp)
+        self.registered_buffers += [name]
+
+    def _create_buffers(self, batch: Dict[str, torch.FloatTensor]) -> None:
+        created = 0
+
+        for name, tensor in batch.items():
+            if name not in self.registered_buffers:
+
+                if not type(tensor) == torch.Tensor:
+                    tensor = torch.from_numpy(np.array([tensor]))
+
+                self.add_buffer(name, tensor.dtype, tensor.shape[1:])
+                created += 1
+
+                print(f"created buffer {name}\t {tensor.dtype}, {tensor.shape[1:]}")
+
+        assert created in [0, len(batch)], "not all buffers created at the same time"
+
+    def add_reservoir(self, batch: Dict[str, torch.FloatTensor]) -> None:
+        """_summary_
+
+        Args:
+            batch (Dict[str, torch.FloatTensor]): _description_
+        """
+
+        self._create_buffers(batch)
+
+        n_elem = batch["x"].size(0)
+
+        place_left = max(0, self.capacity - self.current_index)
+
+        indices = torch.FloatTensor(n_elem).to(self.device)
+        indices = indices.uniform_(0, self.n_seen_so_far).long()
+
+        if place_left > 0:
+            upper_bound = min(place_left, n_elem)
+            indices[:upper_bound] = torch.arange(upper_bound) + self.current_index
+
+        valid_indices = (indices < self.capacity).long()
+        idx_new_data = valid_indices.nonzero().squeeze(-1)
+        idx_buffer = indices[idx_new_data]
+
+        self.n_seen_so_far += n_elem
+        self.current_index = min(self.n_seen_so_far, self.capacity)
+
+        if idx_buffer.numel() == 0:
+            return
+
+        # perform overwrite op
+        for name, data in batch.items():
+            buffer = getattr(self, name)
+
+            if isinstance(data, Iterable):
+                buffer[idx_buffer] = data[idx_new_data]
+            else:
+                buffer[idx_buffer] = data
+
+    def add_balanced(self, batch: Dict[str, torch.FloatTensor]) -> None:
+        self._create_buffers(batch)
+
+        n_elem = batch["x"].size(0)
+
+        # increment first
+        self.n_seen_so_far += n_elem
+        self.current_index = min(self.n_seen_so_far, self.capacity)
+
+        # first thing is we just add all the data
+        for name, data in batch.items():
+            buffer = getattr(self, name)
+
+            if not isinstance(data, Iterable):
+                data = buffer.new(size=(n_elem, *buffer.shape[1:])).fill_(data)
+
+            buffer = torch.cat((data, buffer))[: self.n_seen_so_far]
+            setattr(self, name, buffer)
+
+        n_samples_over = buffer.size(0) - self.capacity
+
+        # no samples to remove
+        if n_samples_over <= 0:
+            return
+
+        # remove samples from the most common classes
+        class_count = self.y.bincount()
+        rem_per_class = torch.zeros_like(class_count)
+
+        while rem_per_class.sum() < n_samples_over:
+            max_idx = class_count.argmax()
+            rem_per_class[max_idx] += 1
+            class_count[max_idx] -= 1
+
+        # always remove the oldest samples for each class
+        classes_trimmed = rem_per_class.nonzero().flatten()
+        idx_remove = []
+
+        for cls in classes_trimmed:
+            cls_idx = (self.y == cls).nonzero().view(-1)
+            idx_remove += [cls_idx[-rem_per_class[cls] :]]
+
+        idx_remove = torch.cat(idx_remove)
+        idx_mask = torch.BoolTensor(buffer.size(0)).to(self.device)
+        idx_mask.fill_(0)
+        idx_mask[idx_remove] = 1
+
+        # perform overwrite op
+        for name, data in batch.items():
+            buffer = getattr(self, name)
+            buffer = buffer[~idx_mask]
+            setattr(self, name, buffer)
+
+    def add_queue(self, batch: Dict[str, torch.FloatTensor]) -> None:
+        self._create_buffers(batch)
+
+        if not hasattr(self, "queue_ptr"):
+            self.queue_ptr = 0
+
+        start_idx = self.queue_ptr
+        end_idx = (start_idx + batch["x"].size(0)) % self.capacity
+
+        for name, data in batch.items():
+            buffer = getattr(self, name)
+            buffer[start_idx:end_idx] = data
+
+    def sample_random(
+        self,
+        n_samples: int,
+        task_id: Optional[int] = None,
+        exclude_task_id: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, torch.FloatTensor]:
+        """_summary_
+
+        Args:
+            n_samples (int): _description_
+            task_id (Optional[int], optional): _description_. Defaults to None.
+            exclude_task_id (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            Dict[str, torch.FloatTensor]: _description_
+        """
+
+        buffers = OrderedDict()
+
+        if task_id is not None:
+            assert hasattr(self, "t"), "`t` is not a registered buffer."
+
+            valid_indices = torch.where(getattr(self, "t") == task_id)[0]
+            valid_indices = valid_indices[valid_indices < self.current_index]
+            for buffer_name in self.registered_buffers:
+                buffers[buffer_name] = getattr(self, buffer_name)[valid_indices]
+
+        elif exclude_task_id is not None:
+            assert hasattr(self, "t"), "`t` is not a registered buffer."
+
+            valid_indices = torch.where(self.t != exclude_task_id)[0]
+            valid_indices = valid_indices[valid_indices < self.current_index]
+            for buffer_name in self.registered_buffers:
+                buffers[buffer_name] = getattr(self, buffer_name)[valid_indices]
+
+        else:
+            for buffer_name in self.registered_buffers:
+                buffers[buffer_name] = getattr(self, buffer_name)[: self.current_index]
+
+        n_selected = buffers["x"].size(0)
+        if n_selected <= n_samples:
+            assert n_selected > 0
+            return buffers
+        else:
+            idx_np = np.random.choice(buffers["x"].size(0), n_samples, replace=False)
+            indices = torch.from_numpy(idx_np)  # .to(self.bx.device)
+
+            return OrderedDict({k: v[indices] for (k, v) in buffers.items()})
+
+    def sample_balanced(
+        self,
+        n_samples: int,
+        task_id: Optional[int] = None,
+        exclude_task_id: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, torch.FloatTensor]:
+        buffers = OrderedDict()
+
+        if task_id is not None:
+            assert hasattr(self, "t"), "`t` is not a registered buffer."
+
+            valid_indices = (getattr(self, "t") == task_id).nonzero().squeeze()
+            for buffer_name in self.registered_buffers:
+                buffers[buffer_name] = getattr(self, buffer_name)[valid_indices]
+
+        elif exclude_task_id is not None:
+            assert hasattr(self, "t"), "`t` is not a registered buffer."
+
+            valid_indices = (getattr(self, "t") != exclude_task_id).nonzero().squeeze()
+            for buffer_name in self.registered_buffers:
+                buffers[buffer_name] = getattr(self, buffer_name)[valid_indices]
+
+        else:
+            for buffer_name in self.registered_buffers:
+                buffers[buffer_name] = getattr(self, buffer_name)[: self.current_index]
+
+        class_count = buffers["y"].bincount()
+
+        # a sample's prob. of being sample is inv. prop to its class abundance
+        class_sample_p = 1.0 / class_count.float() / class_count.size(0)
+        per_sample_p = class_sample_p.gather(0, buffers["y"])
+        indices = torch.multinomial(per_sample_p, n_samples)
+
+        return OrderedDict({k: v[indices] for (k, v) in buffers.items()})
+
+    def sample_mir(
+        self,
+        n_samples: int,
+        subsample: int,
+        model: torch.nn.Module,
+        exclude_task_id: Optional[int] = None,
+        lr: Optional[float] = 0.1,
+        head_only: Optional[bool] = False,
+        **kwargs,
+    ) -> Dict[str, torch.FloatTensor]:
+        subsample = self.sample_random(subsample, exclude_task_id=exclude_task_id)
+
+        if not hasattr(model, "grad_dims"):
+            model.mir_grad_dims = []
+            if head_only:
+                for param in model.linear.parameters():
+                    model.mir_grad_dims += [param.data.numel()]
+            else:
+                for param in model.parameters():
+                    model.mir_grad_dims += [param.data.numel()]
+
+        if head_only:
+            grad_vector = get_grad_vector(
+                list(model.linear.parameters()), model.mir_grad_dims
+            )
+            model_temp = get_future_step_parameters(
+                model.linear, grad_vector, model.mir_grad_dims, lr=lr
+            )
+        else:
+            grad_vector = get_grad_vector(list(model.parameters()), model.mir_grad_dims)
+            model_temp = get_future_step_parameters(
+                model, grad_vector, model.mir_grad_dims, lr=lr
+            )
+
+        with torch.no_grad():
+            hidden_pre = model.return_hidden(subsample["x"])
+            logits_pre = model.linear(hidden_pre)
+
+            if head_only:
+                logits_post = model_temp(hidden_pre)
+            else:
+                logits_post = model_temp(subsample["x"])
+
+            pre_loss = F.cross_entropy(logits_pre, subsample["y"], reduction="none")
+            post_loss = F.cross_entropy(logits_post, subsample["y"], reduction="none")
+
+            scores = post_loss - pre_loss
+            indices = scores.sort(descending=True)[1][:n_samples]
+
+        return OrderedDict({k: v[indices] for (k, v) in subsample.items()})
+
+File Path: clhive/data/cifar.py
+Content:
+from typing import Any, Callable, Dict, Optional, Sequence, Union
+
+from torchvision.datasets.cifar import CIFAR10, CIFAR100
+
+from . import register_dataset
+from .continual_dataset import ContinualDataset
+
+
+class CIFARDataset(ContinualDataset):
+
+    _CIFAR_TYPE = None
+    _DEFAULT_N_TASKS = None
+    _MEAN = (0.4914, 0.4822, 0.4465)
+    _STD = (0.2023, 0.1994, 0.2010)
+    _IMAGE_SIZE = 32
+
+    def __init__(
+        self,
+        root: str,
+        transform: Optional[Callable] = None,
+        normalize_targets_per_task: Optional[bool] = False,
+        train: Optional[bool] = True,
+        download: Optional[bool] = True,
+    ) -> None:
+
+        assert self._CIFAR_TYPE in [
+            "cifar10",
+            "cifar100",
+        ], "CIFARDataset must be subclassed and a valid _CIFAR_TYPE provided"
+
+        if self._CIFAR_TYPE == "cifar10":
+            dataset = CIFAR10(root, train=train, download=download)
+        if self._CIFAR_TYPE == "cifar100":
+            dataset = CIFAR100(root, train=train, download=download)
+
+        super().__init__(
+            dataset=dataset,
+            transform=transform,
+            normalize_targets_per_task=normalize_targets_per_task,
+        )
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any], train: bool) -> "CIFARDataset":
+        """Instantiates a CIFARDataset from a configuration.
+        Args:
+            config: A configuration for a CIFARDataset.
+                See :func:`__init__` for parameters expected in the config.
+        Returns:
+            A CIFARDataset instance.
+        """
+
+        root = config.get("root")
+        train = train
+        transform_config = config.get("transform")
+        download = config.get("download")
+
+        transform = get_transform(transform_config)
+        return cls(root=root, transform=transform, train=train, download=True)
+
+
+@register_dataset("cifar10")
+class SplitCIFAR10(CIFARDataset):
+    _CIFAR_TYPE = "cifar10"
+    _DEFAULT_N_TASKS = 5
+
+
+@register_dataset("cifar100")
+class SplitCIFAR100(CIFARDataset):
+    _CIFAR_TYPE = "cifar100"
+    _DEFAULT_N_TASKS = 20
+
+File Path: clhive/data/continual_dataset.py
+Content:
+from typing import Any, Callable, Dict, Optional, Sequence, Union
+
+import numpy as np
+import torch
+from torchvision import transforms
+
+
+class ContinualDataset:
+    def __init__(
+        self,
+        dataset: Sequence,
+        transform: Optional[Callable] = None,
+        normalize_targets_per_task: Optional[bool] = False,
+    ) -> None:
+        """Constructor for ContinualDataset
+
+        Args:
+            dataset (Sequence): [description]
+            transform (Callable): [description]
+            normalize_targets_per_task (bool): [description]
+        """
+        self.dataset = dataset
+        self.transform = transform
+        self.normalize_targets_per_task = normalize_targets_per_task
+
+        self.n_classes_per_task = None
+        self._current_task = 0
+
+        if transform is None:
+            transform = transforms.Compose([transforms.ToTensor()])
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index: int):
+        assert index >= 0 and index < len(
+            self.dataset
+        ), f"Provided index ({index}) is outside of dataset range."
+
+        sample = self.dataset[index]
+        data, targets = sample
+
+        data = self.transform(data)
+
+        if self.normalize_targets_per_task and self.n_classes_per_task:
+            targets -= self._current_task * self.n_classes_per_task
+
+        return data, targets, self._current_task
+
+    def _set_task(self, task_id: int):
+        self._current_task = task_id
+
+File Path: clhive/data/mnist.py
+Content:
+from typing import Any, Callable, Dict, Optional, Tuple, Union
+from PIL import Image
+
+from torchvision.datasets.mnist import MNIST
+
+from . import register_dataset
+from .continual_dataset import ContinualDataset
+
+
+@register_dataset("seqmnist")
+class SeqMNIST(ContinualDataset):
+
+    _IMAGE_SIZE = 28
+
+    def __init__(
+        self,
+        root: str,
+        transform: Optional[Callable] = None,
+        normalize_targets_per_task: Optional[bool] = False,
+        train: Optional[bool] = True,
+        download: Optional[bool] = True,
+    ) -> None:
+
+        dataset = MNIST(root, train=train, download=download)
+
+        super().__init__(
+            dataset=dataset,
+            transform=transform,
+            normalize_targets_per_task=normalize_targets_per_task,
+        )
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any], train: bool) -> "MNISTDataset":
+        """Instantiates a MNISTDataset from a configuration.
+        Args:
+            config: A configuration for a MNISTDataset.
+                See :func:`__init__` for parameters expected in the config.
+        Returns:
+            A MNISTDataset instance.
+        """
+
+        root = config.get("root")
+        train = train
+        transform_config = config.get("transform")
+        download = config.get("download")
+
+        transform = get_transform(transform_config)
+        return cls(root=root, transform=transform, train=train, download=True)
+
+File Path: clhive/loggers/__init__.py
+Content:
+from .base import BaseLogger
+from .logger import Logger
+
+File Path: clhive/loggers/base.py
+Content:
+from abc import abstractmethod, ABC
+from typing import Any, Dict, List, Optional
+
+
+class BaseLogger(ABC):
+    """Base class for experiment loggers."""
+
+    @abstractmethod
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None):
+        """_summary_
+
+        Args:
+            metrics (Dict[str, float]): _description_
+            step (Optional[int], optional): _description_. Defaults to None.
+        """
+        pass
+
+    def save(self) -> None:
+        """Save log data."""
+        pass
+
+    def finalize(self, status: str) -> None:
+        """Do any processing that is necessary to finalize an experiment.
+
+        Args:
+            status (str): Status that the experiment finished with (e.g. success, failed, aborted)
+        """
+        self.save()
+
+File Path: clhive/loggers/logger.py
+Content:
+from typing import Any, Dict, List, Optional
+
+from .base import BaseLogger
+from ..utils.console_display import ConsoleDisplay
+
+
+class Logger(BaseLogger):
+    def __init__(
+        self,
+        n_tasks: int,
+        loggers: Optional[List[BaseLogger]] = None,
+        log_dir: Optional[str] = "./logs/",
+    ):
+        super().__init__()
+
+        self._step: int = 0
+        self._metrics: Dict[str, List[float]] = {}
+
+        self.loggers = loggers
+        self.display = ConsoleDisplay(n_tasks)
+
+    @property
+    def metrics(self) -> Dict[str, List[float]]:
+        return self._metrics
+
+    def add_logger(self, logger: BaseLogger):
+        self.loggers.append(logger)
+
+    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None):
+
+        for key, value in metrics.items():
+            if key not in self._metrics.keys():
+                self._metrics[key] = [value]
+            else:
+                self._metrics[key].append(value)
+            self._step += 1
+
+    def save(self) -> None:
+        """Save log data."""
+        pass
+
+    def finalize(self, status: str) -> None:
+        """Do any processing that is necessary to finalize an experiment.
+
+        Args:
+            status (str): Status that the experiment finished with (e.g. success, failed, aborted)
+        """
+        self.save()
+
+File Path: clhive/loggers/wandb.py
+Content:
+
+File Path: clhive/methods/__init__.py
+Content:
+import traceback
+from pathlib import Path
+from typing import Any, Optional, Union
+import torch
+
+from .base import BaseMethod
+from ..data import ReplayBuffer
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+from ..utils.registry_utils import import_all_modules
+
+
+FILE_ROOT = Path(__file__).parent
+
+METHOD_REGISTRY = {}
+METHOD_CLASS_NAMES = set()
+METHOD_REGISTRY_TB = {}
+METHOD_CLASS_NAMES_TB = {}
+
+
+def register_method(name, bypass_checks=False):
+    """Register a :class:`BaseMethod` subclass.
+
+    This decorator allows instantiating a subclass of :class:`BaseMethod`
+    from a configuration file. To use it, apply this decorator to a `BaseMethod`
+    subclass.
+
+    Args:
+        name ([type]): [description]
+        bypass_checks (bool, optional): [description]. Defaults to False.
+    """
+
+    def register_method_cls(cls):
+        if not bypass_checks:
+            if name in METHOD_REGISTRY:
+                raise ValueError(
+                    f"Cannot register duplicate method ({name}). Already registered at \n{METHOD_REGISTRY_TB[name]}\n"
+                )
+            if not issubclass(cls, BaseMethod):
+                raise ValueError(
+                    f"Method ({name}: {cls.__name__}) must extend BaseMethod"
+                )
+            if cls.__name__ in METHOD_CLASS_NAMES:
+                raise ValueError(
+                    f"Cannot register method with duplicate class name({cls.__name__}). Previously registered at \n{METHOD_CLASS_NAMES_TB[cls.__name__]}\n"
+                )
+        tb = "".join(traceback.format_stack())
+        METHOD_REGISTRY[name] = cls
+        METHOD_CLASS_NAMES.add(cls.__name__)
+        METHOD_REGISTRY_TB[name] = tb
+        METHOD_CLASS_NAMES_TB[cls.__name__] = tb
+        return cls
+
+    return register_method_cls
+
+
+def auto_method(
+    name: str,
+    model: Union[ContinualModel, torch.nn.Module],
+    optim: torch.optim,
+    logger: Optional[BaseLogger] = None,
+    buffer: Optional[ReplayBuffer] = None,
+    n_replay_samples: Optional[int] = None,
+    **kwargs,
+):
+    assert name in METHOD_REGISTRY, "unknown method"
+    return METHOD_REGISTRY[name](
+        model=model,
+        optim=optim,
+        logger=logger,
+        buffer=buffer,
+        n_replay_samples=n_replay_samples,
+        **kwargs,
+    )
+
+
+# automatically import any Python files in the methods/ directory
+import_all_modules(FILE_ROOT, "clhive.methods")
+
+from .finetuning import FineTuning
+from .er import ER
+
+File Path: clhive/methods/agem.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import numpy as np
+import torch
+import torch.nn.functional as F
+
+from . import register_method
+from .er import ER
+from ..data import ReplayBuffer
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+def store_grad(params, grads, grad_dims):
+    """This stores parameter gradients of past tasks.
+    params: parameters.
+
+    Args:
+        params (_type_): parameters
+        grads (_type_): gradients
+        grad_dims (_type_): list with number of parameters per layers
+    """
+    # store the gradients
+    grads.fill_(0.0)
+    count = 0
+    for param in params():
+        if param.grad is not None:
+            begin = 0 if count == 0 else sum(grad_dims[:count])
+            end = np.sum(grad_dims[: count + 1])
+            grads[begin:end].copy_(param.grad.data.view(-1))
+        count += 1
+
+
+def overwrite_grad(params, new_grad, grad_dims):
+    """This is used to overwrite the gradients with a new gradient
+    vector, whenever violations occur.
+
+    Args:
+        params (_type_): parameters
+        new_grad (_type_): corrected gradient
+        grad_dims (_type_): list storing number of parameters at each layer
+    """
+    cnt = 0
+    for param in params():
+        param.grad = torch.zeros_like(param.data)
+        beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
+        en = sum(grad_dims[: cnt + 1])
+        this_grad = new_grad[beg:en].contiguous().view(param.data.size())
+        param.grad.data.copy_(this_grad)
+        cnt += 1
+
+
+def project(gxy: torch.Tensor, ger: torch.Tensor) -> torch.Tensor:
+    corr = torch.dot(gxy, ger) / torch.dot(ger, ger)
+    return gxy - corr * ger
+
+
+@register_method("agem")
+class AGEM(ER):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        buffer: ReplayBuffer,
+        logger: Optional[BaseLogger] = None,
+        n_replay_samples: Optional[int] = None,
+        **kwargs,
+    ) -> "AGEM":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            buffer (ReplayBuffer): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            n_replay_samples (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            AGEM: _description_
+        """
+        super().__init__(
+            model=model,
+            optim=optim,
+            buffer=buffer,
+            logger=logger,
+            n_replay_samples=n_replay_samples,
+        )
+
+        self.grad_dims = []
+        for param in model.parameters():
+            self.grad_dims += [param.data.numel()]
+
+        device = next(self.model.parameters()).device
+        self.grad_inc = torch.zeros(np.sum(self.grad_dims)).to(device)
+        self.grad_re = torch.zeros(np.sum(self.grad_dims)).to(device)
+
+    @property
+    def name(self) -> str:
+        return "agem"
+
+    def overwrite_grad(self, projected_grad: torch.Tensor) -> None:
+        overwrite_grad(self.model.parameters, projected_grad, self.grad_dims)
+
+    def process_re(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        # store grad
+        store_grad(self.model.parameters, self.grad_inc, self.grad_dims)
+
+        # clear grad buffers
+        self.model.zero_grad()
+
+        # rehearsal grad
+        pred = self.model(x, t)
+        re_loss = self.loss(pred, y)
+        re_loss.backward()
+        store_grad(self.model.parameters, self.grad_re, self.grad_dims)
+
+        # potentially project incoming gradient
+        dot_p = torch.dot(self.grad_inc, self.grad_re)
+        if dot_p < 0.0:
+            proj_grad = project(gxy=self.grad_inc, ger=self.grad_re)
+        else:
+            proj_grad = self.grad_inc
+
+        self.overwrite_grad(proj_grad)
+
+        return re_loss
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+
+        self.optim.zero_grad()
+
+        # --- training --- #
+        inc_loss = self.process_inc(x=x, y=y, t=t)
+        inc_loss.backward()
+
+        re_loss, re_data = 0.0, None
+        if len(self.buffer) > 0:
+
+            # -- rehearsal starts ASAP. No task id is used
+            if self._current_task_id > 0:
+                re_data = self.buffer.sample(n_samples=self.n_replay_samples)
+                re_loss = self.process_re(
+                    x=re_data["x"], y=re_data["y"], t=re_data["t"]
+                )
+
+        self.optim.step()
+
+        # --- buffer overhead --- #
+        self.buffer.add(batch={"x": x, "y": y, "t": t})
+
+        return inc_loss + re_loss
+
+
+@register_method("agempp")
+class AGEMpp(AGEM):
+    @property
+    def name(self) -> str:
+        return "agempp"
+
+    def overwrite_grad(self, projected_grad):
+        overwrite_grad(
+            self.model.parameters, projected_grad + self.grad_re, self.grad_dims
+        )
+
+File Path: clhive/methods/base.py
+Content:
+from cmath import log
+import copy
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import torch
+import torch.nn as nn
+from fvcore.nn import FlopCountAnalysis, flop_count_table
+
+from ..config import Config
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+from ..utils import get_optimizer
+
+
+class BaseMethod(nn.Module):
+    """[summary]"""
+
+    def __init__(
+        self,
+        model: Union[ContinualModel, nn.Module],
+        optim: torch.optim,
+        logger: Optional[BaseLogger] = None,
+        **kwargs,
+    ) -> "BaseMethod":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, nn.Module]): _description_
+            optim (torch.optim): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+
+        Returns:
+            BaseMethod: _description_
+        """
+
+        super(BaseMethod, self).__init__()
+
+        self.model = model
+        self.optim = optim
+        self.logger = logger
+
+        self._model_history = {}
+        self._current_task_id = 0
+
+    @property
+    def name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def current_task(self) -> int:
+        return self._current_task_id
+
+    @property
+    def one_sample_flop(self) -> Tuple[float, float]:
+        """[summary]"""
+        if not hasattr(self, "_train_cost"):
+            input = torch.FloatTensor(size=(1,) + self.config.input_size).to(
+                self.device
+            )
+            flops = FlopCountAnalysis(self.model, input)
+            self._train_cost = flops.total() / 1e6  # MegaFlops
+            self._train_flop_table = flop_count_table(flops)
+
+        return self._train_cost, self._train_flop_table
+
+    def get_model(self, task_id: int = None) -> Union[ContinualModel, nn.Module]:
+        """[summary]
+
+        Args:
+            task_id (int, optional): [description]. Defaults to None.
+
+        Returns:
+            [type]: [description]
+        """
+        if (task_id is None) or (task_id == self._current_task_id):
+            return self.model
+
+        assert (
+            str(task_id) in self._model_history.keys()
+        ), f"No trained model is available for task {task_id}."
+        return self._model_history[str(task_id)]
+
+    def set_model(self, model: Union[ContinualModel, nn.Module], task_id: int) -> None:
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, nn.Module]): _description_
+            task_id (int): _description_
+        """
+        assert model is not None, "Input model cannot be None."
+
+        if (task_id is None) or (task_id == self._current_task_id):
+            self.model = model
+        else:
+            self._model_history[str(task_id)] = model
+
+    def train(self) -> None:
+        self.model.train()
+
+    def eval(self) -> None:
+        self.model.eval()
+
+    def update(self, loss: torch.FloatTensor) -> None:
+        self.optim.zero_grad()
+        loss.backward()
+        self.optim.step()
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        raise NotImplementedError
+
+    def predict(self, x: torch.FloatTensor, t: torch.FloatTensor) -> torch.FloatTensor:
+        if t is None:
+            t = 0
+        return self.model(x, t)
+
+    def on_task_start(self) -> None:
+        """Callback executed at the start of each task."""
+        pass
+
+    def on_task_end(self) -> None:
+        """Callback executed at the end of each task."""
+
+        self._current_task_id += 1
+
+File Path: clhive/methods/der.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import torch
+import torch.nn.functional as F
+
+from . import register_method
+from .er import ER
+from ..data import ReplayBuffer
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+@register_method("der")
+class DER(ER):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        buffer: ReplayBuffer,
+        logger: Optional[BaseLogger] = None,
+        n_replay_samples: Optional[int] = None,
+        **kwargs,
+    ) -> "DER":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            buffer (ReplayBuffer): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            n_replay_samples (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            DER: _description_
+        """
+        super().__init__(
+            model=model,
+            optim=optim,
+            buffer=buffer,
+            logger=logger,
+            n_replay_samples=n_replay_samples,
+        )
+
+        self.alpha = 1
+
+    @property
+    def name(self) -> str:
+        return "der"
+
+    def process_inc(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        """_summary_
+
+        Args:
+            x (torch.FloatTensor): _description_
+            y (torch.FloatTensor): _description_
+            t (torch.FloatTensor): _description_
+
+        Returns:
+            torch.FloatTensor: _description_
+        """
+
+        # process data
+        logits = self.model(x, t)
+        loss = self.loss(logits, y)
+
+        return loss, logits.detach()
+
+    def process_re(
+        self,
+        x: torch.FloatTensor,
+        y: torch.FloatTensor,
+        t: torch.FloatTensor,
+        re_logits: torch.FloatTensor,
+    ) -> torch.FloatTensor:
+        """_summary_
+
+        Args:
+            x (torch.FloatTensor): _description_
+            y (torch.FloatTensor): _description_
+            t (torch.FloatTensor): _description_
+            re_logits (torch.FloatTensor): _description_
+
+        Returns:
+            torch.FloatTensor: _description_
+        """
+
+        logits = self.model(x, t)
+        loss = self.alpha * F.mse_loss(logits, re_logits)
+
+        return loss
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        inc_loss, logits = self.process_inc(x, y, t)
+
+        re_loss = 0
+        if len(self.buffer) > 0:
+
+            if self.n_replay_samples is None:
+                self.n_replay_samples = x.size(0)
+
+            re_data = self.buffer.sample(n_samples=self.n_replay_samples)
+            re_loss = self.process_re(
+                x=re_data["x"],
+                y=re_data["y"],
+                t=re_data["t"],
+                re_logits=re_data["logits"],
+            )
+
+        loss = inc_loss + re_loss
+        self.update(loss)
+
+        self.buffer.add(batch={"x": x, "y": y, "t": t, "logits": logits})
+
+        return loss
+
+
+@register_method("derpp")
+class DERpp(DER):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        buffer: ReplayBuffer,
+        logger: Optional[BaseLogger] = None,
+        n_replay_samples: Optional[int] = None,
+        **kwargs,
+    ) -> "DERpp":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            buffer (ReplayBuffer): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            n_replay_samples (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            DERpp: _description_
+        """
+        super().__init__(
+            model=model,
+            optim=optim,
+            buffer=buffer,
+            logger=logger,
+            n_replay_samples=n_replay_samples,
+        )
+
+        self.beta = 1
+
+    @property
+    def name(self) -> str:
+        return "der++"
+
+    def process_re(
+        self,
+        x: torch.FloatTensor,
+        y: torch.FloatTensor,
+        t: torch.FloatTensor,
+        re_logits: torch.FloatTensor,
+    ) -> torch.FloatTensor:
+        """_summary_
+
+        Args:
+            x (torch.FloatTensor): _description_
+            y (torch.FloatTensor): _description_
+            t (torch.FloatTensor): _description_
+            re_logits (torch.FloatTensor): _description_
+
+        Returns:
+            torch.FloatTensor: _description_
+        """
+
+        logits = self.model(x, t)
+        o1, o2 = logits.chunk(2)
+
+        x1, x2 = x.chunk(2)
+        y1, y2 = y.chunk(2)
+        l1, l2 = re_logits.chunk(2)
+
+        aa = F.mse_loss(o1, l1)
+        bb = self.loss(o2, y2)
+
+        loss = self.alpha * aa + self.beta * bb
+
+        return loss
+
+File Path: clhive/methods/er.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import torch
+
+from . import register_method, BaseMethod
+from ..data import ReplayBuffer
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+@register_method("er")
+class ER(BaseMethod):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        buffer: ReplayBuffer,
+        logger: Optional[BaseLogger] = None,
+        n_replay_samples: Optional[int] = None,
+        **kwargs,
+    ) -> "ER":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            buffer (ReplayBuffer): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            n_replay_samples (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            ER: _description_
+        """
+        super().__init__(model, optim, logger)
+
+        self.buffer = buffer
+        self.n_replay_samples = n_replay_samples
+        self.loss = torch.nn.CrossEntropyLoss()
+
+    @property
+    def name(self) -> str:
+        return "er"
+
+    def process_inc(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        pred = self.model(x, t)
+        loss = self.loss(pred, y)
+
+        return loss
+
+    def process_re(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        pred = self.model(x, t)
+        loss = self.loss(pred, y)
+
+        return loss
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        inc_loss = self.process_inc(x, y, t)
+
+        re_loss = 0
+        if len(self.buffer) > 0:
+
+            if self.n_replay_samples is None:
+                self.n_replay_samples = x.size(0)
+
+            re_data = self.buffer.sample(n_samples=self.n_replay_samples)
+            re_loss = self.process_re(x=re_data["x"], y=re_data["y"], t=re_data["t"])
+
+        loss = inc_loss + re_loss
+        self.update(loss)
+
+        self.buffer.add(batch={"x": x, "y": y, "t": t})
+
+        return loss
+
+File Path: clhive/methods/er_ace.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import torch
+
+from . import register_method
+from .er import ER
+from ..data import ReplayBuffer
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+@register_method("er_ace")
+class ER_ACE(ER):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        buffer: ReplayBuffer,
+        logger: Optional[BaseLogger] = None,
+        n_replay_samples: Optional[int] = None,
+        **kwargs,
+    ) -> "ER_ACE":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            buffer (ReplayBuffer): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            n_replay_samples (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            ER_ACE: _description_
+        """
+        super().__init__(
+            model=model,
+            optim=optim,
+            buffer=buffer,
+            logger=logger,
+            n_replay_samples=n_replay_samples,
+        )
+
+        self.seen_so_far = []
+
+    @property
+    def name(self) -> str:
+        return "er_ace"
+
+    def process_inc(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        """get loss from incoming data"""
+
+        present = y.unique()
+        self.seen_so_far = list(set(self.seen_so_far + present.tolist()))
+
+        # process data
+        logits = self.model(x, t)
+        mask = torch.zeros_like(logits)
+
+        # unmask current classes
+        mask[:, present] = 1
+
+        # unmask unseen classes
+        mask[:, max(self.seen_so_far) :] = 1
+
+        if t[0].item() > 0:
+            logits = logits.masked_fill(mask == 0, -1e9)
+
+        loss = self.loss(logits, y)
+
+        return loss
+
+File Path: clhive/methods/ewc.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import copy
+import torch
+
+from . import register_method, BaseMethod
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+def zero_like_params_dict(model: torch.nn.Module):
+    """
+    Create a list of (name, parameter), where parameter is initialized to zero.
+    The list has as many parameters as the model, with the same size.
+    :param model: a pytorch model
+    """
+
+    return [(k, torch.zeros_like(p).to(p.device)) for k, p in model.named_parameters()]
+
+
+def copy_params_dict(model: torch.nn.Module, copy_grad=False):
+    """
+    Create a list of (name, parameter), where parameter is copied from model.
+    The list has as many parameters as model, with the same size.
+    :param model: a pytorch model
+    :param copy_grad: if True returns gradients instead of parameter values
+    """
+
+    if copy_grad:
+        return [(k, p.grad.data.clone()) for k, p in model.named_parameters()]
+    else:
+        return [(k, p.data.clone()) for k, p in model.named_parameters()]
+
+
+@register_method("ewc")
+class EWC(BaseMethod):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        train_loader: torch.utils.data.DataLoader,
+        logger: Optional[BaseLogger] = None,
+        **kwargs,
+    ) -> "EWC":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            train_loader (torch.utils.data.DataLoader): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+
+        Returns:
+            EWC: _description_
+        """
+        super().__init__(model, optim, logger)
+
+        self.train_loader = train_loader
+        self.loss = torch.nn.CrossEntropyLoss()
+        self.ewc_lambda = 100
+
+        self.saved_parameters = dict()
+        self.importance_matrices = dict()
+
+    @property
+    def name(self) -> str:
+        return "ewc"
+
+    def _compute_importance(
+        self,
+        model: torch.nn.Module,
+        criterion: torch.nn.CrossEntropyLoss,
+        optimizer: torch.optim.Optimizer,
+        train_loader: torch.utils.data.DataLoader,
+        current_task_id: int,
+    ) -> torch.FloatTensor:
+        """
+        Compute EWC importance matrix for each parameter
+        """
+        model.eval()
+        importance_matrix = zero_like_params_dict(model=model)
+        device = next(self.model.parameters()).device
+
+        train_loader.sampler.set_task(current_task_id)
+        for idx, (data, targets, tasks) in enumerate(train_loader):
+
+            data, targets = data.to(device), targets.to(device)
+            # targets -= current_task_id * self.args.n_classes_per_task
+
+            optimizer.zero_grad()
+            predictions = model(data, t=tasks)
+
+            loss = criterion(predictions, targets)
+            loss.backward()
+
+            for (net_param_name, net_param_value), (
+                imp_param_name,
+                imp_param_value,
+            ) in zip(model.named_parameters(), importance_matrix):
+                assert net_param_name == imp_param_name
+                if net_param_value.grad is not None:
+                    imp_param_value += net_param_value.grad.data.clone().pow(2)
+
+        # average over mini batch length
+        for _, imp_param_value in importance_matrix:
+            imp_param_value /= float(len(train_loader))
+
+        return importance_matrix
+
+    def _record_state(
+        self,
+        model: torch.nn.Module,
+        criterion: torch.nn.CrossEntropyLoss,
+        optimizer: torch.optim.Optimizer,
+        train_loader: torch.utils.data.DataLoader,
+        current_task_id: int,
+    ) -> None:
+        # to be called at the end of training each task
+        importance_matrix = self._compute_importance(
+            model=model,
+            criterion=criterion,
+            optimizer=optimizer,
+            train_loader=train_loader,
+            current_task_id=current_task_id,
+        )
+
+        self.importance_matrices[current_task_id] = importance_matrix
+        self.saved_parameters[current_task_id] = copy_params_dict(model)
+
+    def ewc_loss(
+        self, model: torch.nn.Module, current_task_id: int
+    ) -> torch.FloatTensor:
+        if current_task_id == 0:
+            return 0
+
+        loss = 0
+        for task_id in range(current_task_id):
+            for (
+                (_, current_parameters),
+                (_, saved_parameters),
+                (_, importance_weight),
+            ) in zip(
+                model.named_parameters(),
+                self.saved_parameters[task_id],
+                self.importance_matrices[task_id],
+            ):
+                loss += (
+                    importance_weight * (current_parameters - saved_parameters).pow(2)
+                ).sum()
+
+        return loss
+
+    def process_inc(
+        self, features: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        pred = self.model(x, t)
+        loss = self.loss(pred, y)
+
+        return loss
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+
+        features = self.model.forward_backbone(x)
+
+        pred = self.model.forward_head(features, t)
+        inc_loss = self.loss(pred, y)
+
+        ewc_loss = self.ewc_loss(
+            model=self.model, current_task_id=self._current_task_id
+        )
+
+        loss = inc_loss + self.ewc_lambda * ewc_loss
+        self.update(loss)
+
+        return loss
+
+    def on_task_end(self) -> None:
+        self._record_state(
+            model=self.model,
+            criterion=self.loss,
+            optimizer=self.optim,
+            train_loader=self.train_loader,
+            current_task_id=self._current_task_id,
+        )
+
+        super().on_task_end()
+
+File Path: clhive/methods/finetuning.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import torch
+
+from . import register_method, BaseMethod
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+@register_method("finetuning")
+class FineTuning(BaseMethod):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        logger: Optional[BaseLogger] = None,
+        **kwargs,
+    ) -> "FineTuning":
+        super().__init__(model, optim, logger)
+
+        self.loss = torch.nn.CrossEntropyLoss()
+
+    @property
+    def name(self):
+        return "finetuning"
+
+    def observe(self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor):
+        pred = self.model(x, t)
+        loss = self.loss(pred, y)
+
+        self.update(loss)
+
+        return loss
+
+File Path: clhive/methods/icarl.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import copy
+import torch
+import torch.nn.functional as F
+
+from . import register_method
+from .er import ER
+from ..data import ReplayBuffer
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+@register_method("icarl")
+class ICARL(ER):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        buffer: ReplayBuffer,
+        logger: Optional[BaseLogger] = None,
+        n_replay_samples: Optional[int] = None,
+        **kwargs,
+    ) -> "ICARL":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            buffer (ReplayBuffer): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            n_replay_samples (Optional[int], optional): _description_. Defaults to None.
+
+        Returns:
+            ICARL: _description_
+        """
+        super().__init__(
+            model=model,
+            optim=optim,
+            buffer=buffer,
+            logger=logger,
+            n_replay_samples=n_replay_samples,
+        )
+
+        self.D_C = 1
+        self._centroids = None
+        self._old_model = None
+
+        self.loss = torch.nn.BCEWithLogitsLoss(reduction="sum")
+
+    @property
+    def name(self) -> str:
+        return "icarl"
+
+    @torch.no_grad()
+    def _calculate_centroids(self) -> None:
+        buffer = self.buffer
+        n_batches = len(buffer) // 512 + 1
+
+        hid_size = self.model.forward_backbone(buffer.bx[:2]).size(-1)
+
+        arr_D = torch.arange(hid_size).to(buffer.bx.device)
+
+        protos = buffer.bx.new_zeros(size=(self.args.n_classes, hid_size))
+        count = buffer.by.new_zeros(size=(self.args.n_classes,))
+
+        for i in range(n_batches):
+            idx = range(i * 512, min(len(buffer), (i + 1) * 512))
+            xx, yy = buffer.bx[idx], buffer.by[idx]
+
+            hid_x = self.model.forward_backbone(xx)
+
+            b_proto = torch.zeros_like(protos)
+            b_count = torch.zeros_like(count)
+
+            b_count.scatter_add_(0, yy, torch.ones_like(yy))
+
+            out_idx = arr_D.view(1, -1) + yy.view(-1, 1) * hid_size
+            b_proto = (
+                b_proto.view(-1)
+                .scatter_add(0, out_idx.view(-1), hid_x.view(-1))
+                .view_as(b_proto)
+            )
+
+            protos += b_proto
+            count += b_count
+
+        self._centroids = protos / count.view(-1, 1)
+
+        # mask out unobserved centroids
+        self._centroids[count < 1] = -1e9
+
+    def process_inc(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        """_summary_
+
+        Args:
+            x (torch.FloatTensor): _description_
+            y (torch.FloatTensor): _description_
+            t (torch.FloatTensor): _description_
+
+        Returns:
+            torch.FloatTensor: _description_
+        """
+        logits = self.model(x, t)
+        label = F.one_hot(y, num_classes=logits.size(-1)).float()
+
+        loss = self.loss(logits.view(-1), label.view(-1)).sum()
+        loss = loss / logits.size(0)
+
+        return loss
+
+    def process_re(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        """_summary_
+
+        Args:
+            x (torch.FloatTensor): _description_
+            y (torch.FloatTensor): _description_
+            t (torch.FloatTensor): _description_
+
+        Returns:
+            torch.FloatTensor: _description_
+        """
+        loss = 0
+
+        if self._old_model is not None:
+            with torch.no_grad():
+                tgt = F.sigmoid(self._old_model(x, t))
+
+            logits = self.model(x, t)
+            loss = self.loss(logits.view(-1), tgt.view(-1)) / logits.size(0)
+
+        return loss
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        """_summary_
+
+        Args:
+            x (torch.FloatTensor): _description_
+            y (torch.FloatTensor): _description_
+            t (torch.FloatTensor): _description_
+
+        Returns:
+            torch.FloatTensor: _description_
+        """
+        loss = super().observe(x, y, t)
+
+        # mask centroids as out of sync
+        self._centroids = None
+
+        return loss
+
+    def on_task_end(self) -> None:
+        self._old_model = copy.deepcopy(self.model)
+        self._old_model.eval()
+        super().on_task_end()
+
+File Path: clhive/methods/lwf.py
+Content:
+from typing import Any, List, Optional, Tuple, Union
+import copy
+import torch
+
+from . import register_method, BaseMethod
+from ..loggers import BaseLogger
+from ..models import ContinualModel
+
+
+@register_method("lwf")
+class LwF(BaseMethod):
+    def __init__(
+        self,
+        model: Union[ContinualModel, torch.nn.Module],
+        optim: torch.optim,
+        logger: Optional[BaseLogger] = None,
+        **kwargs,
+    ) -> "LwF":
+        """_summary_
+
+        Args:
+            model (Union[ContinualModel, torch.nn.Module]): _description_
+            optim (torch.optim): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+
+        Returns:
+            LwF: _description_
+        """
+        super().__init__(model, optim, logger)
+
+        self.loss = torch.nn.CrossEntropyLoss()
+
+        self.temp = 2
+        self.lambda_0 = 1
+        self.prev_model = None
+
+    @property
+    def name(self) -> str:
+        return "lwf"
+
+    def record_state(self) -> None:
+        self.prev_model = copy.deepcopy(self.model)
+
+    def _distillation_loss(
+        self, current_out: torch.FloatTensor, prev_out: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        log_p = torch.log_softmax(current_out / self.temp, dim=1)
+        q = torch.softmax(prev_out / self.temp, dim=1)
+        result = torch.nn.KLDivLoss(reduction="batchmean")(log_p, q)
+
+        return result
+
+    def lwf_loss(
+        self,
+        features: torch.FloatTensor,
+        data: torch.FloatTensor,
+        current_model: torch.nn.Module,
+        current_task: torch.FloatTensor,
+    ) -> torch.FloatTensor:
+        if self.prev_model is None:
+            return 0.0
+
+        predictions_old_tasks_old_model = dict()
+        predictions_old_tasks_new_model = dict()
+        for task_id in range(current_task[0]):
+            with torch.inference_mode():
+                predictions_old_tasks_old_model[task_id] = self.prev_model(
+                    data, t=torch.full_like(current_task, fill_value=task_id)
+                )
+            predictions_old_tasks_new_model[task_id] = current_model.forward_head(
+                features, t=torch.full_like(current_task, fill_value=task_id)
+            )
+
+        dist_loss = 0
+        for task_id in predictions_old_tasks_old_model.keys():
+            dist_loss += self._distillation_loss(
+                current_out=predictions_old_tasks_new_model[task_id],
+                prev_out=predictions_old_tasks_old_model[task_id].clone(),
+            )
+
+        return dist_loss
+
+    def process_inc(
+        self, features: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        pred = self.model(x, t)
+        loss = self.loss(pred, y)
+
+        return loss
+
+    def observe(
+        self, x: torch.FloatTensor, y: torch.FloatTensor, t: torch.FloatTensor
+    ) -> torch.FloatTensor:
+
+        features = self.model.forward_backbone(x)
+
+        pred = self.model.forward_head(features, t)
+        inc_loss = self.loss(pred, y)
+
+        lwf_loss = self.lwf_loss(
+            features=features, data=x, current_model=self.model, current_task=t
+        )
+
+        loss = inc_loss + self.lambda_0 * lwf_loss
+        self.update(loss)
+
+        return loss
+
+    def on_task_end(self) -> None:
+        super().on_task_end()
+        self.record_state()
+
+File Path: clhive/models/__init__.py
+Content:
+import copy
+import traceback
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from ..utils.registry_utils import import_all_modules
+
+
+FILE_ROOT = Path(__file__).parent
+
+MODEL_REGISTRY = {}
+MODEL_CLASS_NAMES = set()
+MODEL_REGISTRY_TB = {}
+MODEL_CLASS_NAMES_TB = {}
+
+
+def register_model(name, bypass_checks=False):
+    def register_model_cls(cls):
+        if not bypass_checks:
+            if name in MODEL_REGISTRY:
+                raise ValueError(
+                    f"Cannot register duplicate model ({name}). Already registered at \n{MODEL_REGISTRY_TB[name]}\n"
+                )
+            if cls.__name__ in MODEL_CLASS_NAMES:
+                raise ValueError(
+                    f"Cannot register model with duplicate class name({cls.__name__}). Previously registered at \n{MODEL_CLASS_NAMES_TB[cls.__name__]}\n"
+                )
+        tb = "".join(traceback.format_stack())
+        MODEL_REGISTRY[name] = cls
+        MODEL_CLASS_NAMES.add(cls.__name__)
+        MODEL_REGISTRY_TB[name] = tb
+        MODEL_CLASS_NAMES_TB[cls.__name__] = tb
+        return cls
+
+    return register_model_cls
+
+
+def auto_model(
+    name: str,
+    input_size: Optional[int] = None,
+    hidden_size: Optional[int] = None,
+    output_size: Optional[int] = None,
+    nf: Optional[int] = 32,
+    **kwargs,
+):
+
+    assert name in MODEL_REGISTRY, "unknown model"
+    return MODEL_REGISTRY[name](
+        input_size=input_size,
+        hidden_size=hidden_size,
+        output_size=output_size,
+        nf=nf,
+        **kwargs,
+    )
+
+
+# automatically import any Python files in the models/ directory
+import_all_modules(FILE_ROOT, "clhive.models")
+
+from .continual_model import ContinualModel
+from .resnet import resnet18, resnet34, resnet50, resnet101
+from .vision_transformer import (
+    vit_tiny_patch16,
+    vit_small_patch16,
+    vit_small_patch32,
+    vit_base_patch16,
+    vit_base_patch32,
+    vit_large_patch14,
+    vit_large_patch16,
+    vit_large_patch32,
+    vit_huge_patch14,
+)
+from .mlp import LinearClassifier, DistLinear, MLP
+
+File Path: clhive/models/continual_model.py
+Content:
+from typing import Dict, List, Optional, Union
+
+import torch
+import torch.nn as nn
+
+from . import auto_model
+from ..config import Config
+from ..scenarios import ClassIncremental, TaskIncremental
+
+
+class ContinualModel(nn.Module):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        heads: Union[nn.ModuleList, nn.Module],
+        scenario: Union[ClassIncremental, TaskIncremental],
+    ) -> "ContinualModel":
+
+        super(ContinualModel, self).__init__()
+
+        self.backbone = backbone
+        self.scenario = scenario
+        self.heads = nn.ModuleList(heads)
+
+        if isinstance(scenario, TaskIncremental):
+            msg = (
+                "Number of `heads` should be equal to `n_tasks`"
+                + "in TaskIncremental scenario, "
+                + f"expected {scenario.n_tasks} nn.Modules but received {len(self.heads)}."
+            )
+            assert len(self.heads) == scenario.n_tasks, msg
+
+    @classmethod
+    def auto_model(
+        cls,
+        backbone_name: str,
+        scenario: Union[ClassIncremental, TaskIncremental],
+        image_size: Optional[int] = None,
+        head_name: Optional[str] = "linear",
+    ) -> "ContinualModel":
+
+        backbone = auto_model(name=backbone_name, input_size=image_size)
+
+        if isinstance(scenario, TaskIncremental):
+            heads = [
+                auto_model(
+                    name=head_name,
+                    input_size=backbone.output_dim,
+                    output_size=scenario.loader.sampler.cpt,
+                )
+                for t in range(scenario.n_tasks)
+            ]
+        else:
+            heads = [
+                auto_model(
+                    name=head_name,
+                    input_size=backbone.output_dim,
+                    output_size=scenario.n_classes,
+                )
+            ]
+
+        return cls(backbone, heads, scenario)
+
+    @classmethod
+    def from_config(cls, config: Config) -> "ContinualModel":
+        """Instantiates a Model from a configuration.
+
+        Args:
+            config (Dict): A configuration for the Model.
+
+        Returns:
+            A torch.nn.Module instance.
+        """
+
+        return cls(*args, **kwargs)
+
+    def set_heads(self, heads: nn.ModuleDict) -> None:
+        self.heads = heads
+
+    def add_head(self, name: str, head: nn.Module) -> None:
+        self.heads.update({name: head})
+
+    def forward_backbone(self, x) -> torch.Tensor:
+        return self.backbone(x)
+
+    def forward_head(
+        self, x: torch.Tensor, t: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        if (t is None) or (not isinstance(self.scenario, TaskIncremental)):
+            return self.heads[0](x)
+
+        pred = torch.zeros(
+            x.size(0),
+            self.heads[0].output_size,
+            device=next(self.backbone.parameters()).device,
+        )
+        tasks = t.unique().tolist()
+        for task in tasks:
+            idx = t == task
+            pred[idx] = self.heads[task](x[idx, ...])
+
+        return pred
+
+    def forward(
+        self, x: torch.Tensor, t: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Perform computation of blocks in the order define in get_blocks.
+        """
+        if isinstance(self.scenario, TaskIncremental):
+            assert t.max() < len(
+                self.heads
+            ), f"head number {t} does not exist in `ContinualModel.heads`"
+
+        x = self.forward_backbone(x)
+        x = self.forward_head(x, t)
+        return x
+
+File Path: clhive/models/mlp.py
+Content:
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+
+from . import register_model
+
+
+def normalize(x):
+    x_norm = torch.norm(x, p=2, dim=1).unsqueeze(1).expand_as(x)
+    x_normalized = x.div(x_norm + 0.00001)
+    return x_normalized
+
+
+def add_linear(input_size: int, output_size: int, batch_norm: bool, relu: bool):
+    layers = []
+    layers.append(nn.Linear(input_size, output_size))
+    if batch_norm:
+        layers.append(nn.BatchNorm1d(output_size))
+    if relu:
+        layers.append(nn.ReLU(inplace=True))
+
+    return nn.Sequential(*layers)
+
+
+@register_model("linear")
+class LinearClassifier(nn.Module):
+    """Linear classifier"""
+
+    def __init__(self, input_size, output_size, **kwargs):
+        super(LinearClassifier, self).__init__()
+        self.fc = nn.Linear(input_size, output_size)
+        self.output_size = output_size
+
+    def forward(self, x):
+        return self.fc(x)
+
+
+@register_model("distlinear")
+class DistLinear(nn.Module):
+    def __init__(self, input_size, output_size, weight=None, **kwargs):
+        super(DistLinear, self).__init__(input_size, output_size)
+        self.L = nn.Linear(input_size, output_size, bias=False)
+        if weight is not None:
+            self.L.weight.data = Variable(weight)
+
+        self.scale_factor = 10
+        self.output_size = output_size
+
+    def forward(self, x):
+        x_norm = torch.norm(x, p=2, dim=1).unsqueeze(1).expand_as(x)
+        x_normalized = x.div(x_norm + 0.00001)
+
+        L_norm = (
+            torch.norm(self.L.weight, p=2, dim=1)
+            .unsqueeze(1)
+            .expand_as(self.L.weight.data)
+        )
+        L_normalized = self.L.weight.div(L_norm + 0.00001)
+
+        cos_dist = torch.mm(x_normalized, L_normalized.transpose(0, 1))
+
+        scores = self.scale_factor * (cos_dist)
+
+        return scores
+
+
+@register_model("mlp")
+class MLP(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_dim: int,
+        output_size: int,
+        num_layers: int = 2,
+        batch_norm: bool = False,
+        **kwargs
+    ) -> None:
+        """[summary]
+
+        Args:
+            input_size (int): [description]
+            hidden_dim (int): [description]
+            output_size (int): [description]
+            num_layers (int, optional): [description]. Defaults to 2.
+            batch_norm (bool, optional): [description]. Defaults to False.
+        """
+
+        super(MLP, self).__init__(input_size, output_size)
+        self.layers = self._make_layers(
+            input_size, hidden_dim, output_size, num_layers, batch_norm
+        )
+        self.output_size = output_size
+
+    def _make_layers(self, input_size, hidden_dim, output_size, num_layers, batch_norm):
+        dims = [input_size] + num_layers * [hidden_dim] + [output_size]
+        layers = []
+        for i in range(len(dims)):
+            layers.append(
+                add_linear(
+                    input_size=dims[i],
+                    output_size=dims[i + 1],
+                    batch_norm=batch_norm,
+                    relu=(i < len(dims) - 2),
+                )
+            )
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.layers(x)
+
+File Path: clhive/models/resnet.py
+Content:
+from typing import Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
+
+from . import register_model
+from .mlp import LinearClassifier, DistLinear, MLP
+
+
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1, is_last=False):
+        super(BasicBlock, self).__init__()
+        self.is_last = is_last
+        self.conv1 = nn.Conv2d(
+            in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
+        )
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm2d(planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(
+                    in_planes,
+                    self.expansion * planes,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(self.expansion * planes),
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        preact = out
+        out = F.relu(out)
+        if self.is_last:
+            return out, preact
+        else:
+            return out
+
+
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, in_planes, planes, stride=1, is_last=False):
+        super(Bottleneck, self).__init__()
+        self.is_last = is_last
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = nn.Conv2d(
+            planes, self.expansion * planes, kernel_size=1, bias=False
+        )
+        self.bn3 = nn.BatchNorm2d(self.expansion * planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(
+                    in_planes,
+                    self.expansion * planes,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(self.expansion * planes),
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = F.relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+        out += self.shortcut(x)
+        preact = out
+        out = F.relu(out)
+        if self.is_last:
+            return out, preact
+        else:
+            return out
+
+
+class ResNet(nn.Module):
+    def __init__(
+        self, block, num_blocks, nf, in_channel=3, zero_init_residual=False, **kwargs
+    ):
+        super(ResNet, self).__init__()
+
+        self.in_planes = nf
+
+        # hardcoded for now
+        self.output_dim = nf * 8 * block.expansion
+
+        self.conv1 = nn.Conv2d(
+            in_channel, nf, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn1 = nn.BatchNorm2d(nf)
+        self.layer1 = self._make_layer(block, 1 * nf, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 2 * nf, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 4 * nf, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 8 * nf, num_blocks[3], stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves
+        # like an identity. This improves the model by 0.2~0.3% according to:
+        # https://arxiv.org/abs/1706.02677
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for i in range(num_blocks):
+            stride = strides[i]
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def return_hidden(self, x, layer):
+        layers = [self.layer1, self.layer2, self.layer3, self.layer4]
+        out = F.relu(self.bn1(self.conv1(x)))
+        for lyr in layers[:layer]:
+            out = lyr(out)
+        out = self.avgpool(out)
+        out = torch.flatten(out, 1)
+        return out
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = torch.flatten(out, 1)
+        return out
+
+
+@register_model("resnet18")
+def resnet18(nf: Optional[int] = 32, **kwargs):
+    return ResNet(BasicBlock, num_blocks=[2, 2, 2, 2], nf=nf, **kwargs)
+
+
+@register_model("resnet34")
+def resnet34(nf: Optional[int] = 32, **kwargs):
+    return ResNet(BasicBlock, num_blocks=[3, 4, 6, 3], nf=nf, **kwargs)
+
+
+@register_model("resnet50")
+def resnet50(nf: Optional[int] = 32, **kwargs):
+    return ResNet(Bottleneck, num_blocks=[3, 4, 6, 3], nf=nf, **kwargs)
+
+
+@register_model("resnet101")
+def resnet101(nf: Optional[int] = 32, **kwargs):
+    return ResNet(Bottleneck, num_blocks=[3, 4, 23, 3], nf=nf, **kwargs)
+
+File Path: clhive/models/vision_transformer.py
+Content:
+import math
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Optional, Tuple, Union, Callable
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from . import register_model
+
+
+class LayerNorm(nn.LayerNorm):
+    """Subclass torch's LayerNorm to handle fp16."""
+
+    def forward(self, x: torch.Tensor):
+        orig_type = x.dtype
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        return x.to(orig_type)
+
+
+class QuickGELU(nn.Module):
+    # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
+    def forward(self, x: torch.Tensor):
+        return x * torch.sigmoid(1.702 * x)
+
+
+class ResidualAttentionBlock(nn.Module):
+    def __init__(self, d_model: int, n_head: int, act_layer: Callable = nn.GELU):
+        super().__init__()
+
+        self.attn = nn.MultiheadAttention(d_model, n_head)
+        self.ln_1 = LayerNorm(d_model)
+        self.mlp = nn.Sequential(
+            OrderedDict(
+                [
+                    ("c_fc", nn.Linear(d_model, d_model * 4)),
+                    ("gelu", act_layer()),
+                    ("c_proj", nn.Linear(d_model * 4, d_model)),
+                ]
+            )
+        )
+        self.ln_2 = LayerNorm(d_model)
+
+    def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
+
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+
+class Transformer(nn.Module):
+    def __init__(
+        self, width: int, layers: int, n_heads: int, act_layer: Callable = nn.GELU
+    ):
+        super().__init__()
+        self.width = width
+        self.layers = layers
+        self.resblocks = nn.ModuleList(
+            [
+                ResidualAttentionBlock(width, n_heads, act_layer=act_layer)
+                for _ in range(layers)
+            ]
+        )
+
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        for r in self.resblocks:
+            x = r(x, attn_mask=attn_mask)
+        return x
+
+
+class VisualTransformer(nn.Module):
+    def __init__(
+        self,
+        input_size: int = 224,
+        patch_size: int = 16,
+        in_channels: int = 3,
+        embed_dim: int = 768,
+        n_layers: int = 12,
+        n_heads: int = 12,
+        output_dim: int = 512,
+        act_layer: Callable = nn.GELU,
+        **kwargs,
+    ):
+
+        super().__init__()
+
+        self.input_size = input_size
+        self.output_dim = output_dim
+        self.conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=embed_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=False,
+        )
+
+        scale = embed_dim**-0.5
+        self.num_patches = (input_size // patch_size) ** 2
+
+        self.class_embedding = nn.Parameter(scale * torch.randn(embed_dim))
+        self.positional_embedding = nn.Parameter(
+            scale * torch.randn(self.num_patches + 1, embed_dim)
+        )
+        self.ln_pre = LayerNorm(embed_dim)
+
+        self.transformer = Transformer(
+            embed_dim, n_layers, n_heads, act_layer=act_layer
+        )
+
+        self.ln_post = LayerNorm(embed_dim)
+        self.proj = nn.Parameter(scale * torch.randn(embed_dim, output_dim))
+
+    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
+        assert (
+            unlocked_groups == 0
+        ), "partial locking not currently supported for this model"
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def forward(self, x: torch.Tensor, forward_head: Optional[bool] = True, *args):
+        x = self.conv1(x)  # shape = [*, embed_dim, grid, grid]
+        x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, embed_dim, grid ** 2]
+        x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, embed_dim]
+        x = torch.cat(
+            [
+                self.class_embedding.to(x.dtype)
+                + torch.zeros(
+                    x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device
+                ),
+                x,
+            ],
+            dim=1,
+        )  # shape = [*, grid ** 2 + 1, embed_dim]
+        x = x + self.positional_embedding.to(x.dtype)
+        x = self.ln_pre(x)
+
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+
+        cls_embeds = self.ln_post(x[:, 0, :])
+
+        if forward_head:
+            cls_embeds = cls_embeds @ self.proj
+
+        return cls_embeds
+
+
+@register_model("vit_tiny_patch16")
+def vit_tiny_patch16(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Tiny (Vit-Ti/16)"""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=16,
+        embed_dim=192,
+        n_layers=12,
+        n_heads=3,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_small_patch16")
+def vit_small_patch16(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Small (ViT-S/16)"""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=16,
+        embed_dim=384,
+        n_layers=12,
+        n_heads=6,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_small_patch32")
+def vit_small_patch32(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Small (ViT-S/32)"""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=32,
+        embed_dim=384,
+        n_layers=12,
+        n_heads=6,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_base_patch16")
+def vit_base_patch16(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Base (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-1k weights fine-tuned from in21k @ 224x224, source https://github.com/google-research/vision_transformer.
+    """
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=16,
+        embed_dim=768,
+        n_layers=12,
+        n_heads=12,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_base_patch32")
+def vit_base_patch32(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Base (ViT-B/32) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-1k weights fine-tuned from in21k, source https://github.com/google-research/vision_transformer.
+    """
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=32,
+        embed_dim=768,
+        n_layers=12,
+        n_heads=12,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_large_patch14")
+def vit_large_patch14(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Large model (ViT-L/14)"""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=14,
+        embed_dim=1024,
+        n_layers=24,
+        n_heads=16,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_large_patch16")
+def vit_large_patch16(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Large model (ViT-L/16) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-1k weights fine-tuned from in21k @ 224x224, source https://github.com/google-research/vision_transformer.
+    """
+
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=16,
+        embed_dim=1024,
+        n_layers=24,
+        n_heads=16,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_large_patch32")
+def vit_large_patch32(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Large model (ViT-L/32) from original paper (https://arxiv.org/abs/2010.11929). No pretrained weights."""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=32,
+        embed_dim=1024,
+        n_layers=24,
+        n_heads=16,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_huge_patch14")
+def vit_huge_patch14(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Huge model (ViT-H/14) from original paper (https://arxiv.org/abs/2010.11929)."""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=14,
+        embed_dim=1280,
+        n_layers=32,
+        n_heads=16,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+
+@register_model("vit_giant_patch14")
+def vit_giant_patch14(
+    input_size: Optional[int] = 224, output_dim: Optional[int] = 512, **kwargs
+):
+    """ViT-Giant model (ViT-g/14) from `Scaling Vision Transformers` - https://arxiv.org/abs/2106.04560"""
+    return VisualTransformer(
+        input_size=input_size,
+        patch_size=14,
+        embed_dim=1408,
+        n_layers=40,
+        n_heads=16,
+        output_dim=output_dim,
+        **kwargs,
+    )
+
+File Path: clhive/scenarios/__init__.py
+Content:
+from .class_incremental import ClassIncremental
+from .task_incremental import TaskIncremental
+
+File Path: clhive/scenarios/class_incremental.py
+Content:
+from typing import Callable, List, Optional, Union
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+from .continual_sampler import ContinualSampler
+from ..data import ContinualDataset
+
+
+class ClassIncremental:
+    def __init__(
+        self,
+        dataset: ContinualDataset,
+        n_tasks: int,
+        batch_size: int,
+        n_workers: Optional[int] = 0,
+        smooth_task_boundary: Optional[bool] = False,
+    ) -> "ClassIncremental":
+        """_summary_
+
+        Args:
+            dataset (_type_): _description_
+            n_tasks (int): _description_
+            batch_size (int): _description_
+            n_workers (Optional[int], optional): _description_. Defaults to 0.
+            smooth_task_boundary (Optional[bool], optional): _description_. Defaults to False.
+
+        Returns:
+            ClassIncremental: _description_
+        """
+
+        self.dataset = dataset
+        self.n_tasks = n_tasks
+        self.batch_size = batch_size
+        self.n_workers = n_workers
+        self.smooth_task_boundary = smooth_task_boundary
+
+        self._task_id = 0
+        self.loader = self._create_dataloader(dataset=self.dataset)
+
+        self.dataset.normalize_targets_per_task = False
+
+    @property
+    def n_samples(self) -> int:
+        """Total number of samples in the whole continual setting."""
+        return len(self.dataset)
+
+    @property
+    def n_classes(self) -> int:
+        """Total number of classes in the whole continual setting."""
+        if isinstance(self.dataset, torch.utils.data.Subset):
+            targets = np.array(self.dataset.dataset.targets)[self.dataset.indices]
+        else:
+            targets = self.dataset.dataset.targets
+
+        return len(np.unique(targets))
+
+    def __len__(self) -> int:
+        """Returns the number of tasks.
+
+        Returns:
+            int: Number of tasks.
+        """
+        return self.n_tasks
+
+    def __iter__(self):
+        """Used for iterating through all tasks with the CLLoader in a for loop."""
+        self._task_id = 0
+        return self
+
+    def __next__(self):
+        if self._task_id >= len(self):
+            raise StopIteration
+        self.loader.sampler.set_task(self._task_id)
+        self._task_id += 1
+
+        return self.loader
+
+    def __getitem__(self, task_id: int):
+        self.loader.sampler.set_task(task_id)
+        return self.loader
+
+    def _create_dataloader(self, dataset: ContinualDataset) -> DataLoader:
+        sampler = ContinualSampler(
+            dataset=dataset,
+            n_tasks=self.n_tasks,
+            smooth_boundary=self.smooth_task_boundary,
+            normal_targets_per_task=False,
+        )
+        dataset.n_classes_per_task = sampler.cpt
+
+        return DataLoader(
+            dataset=dataset,
+            batch_size=self.batch_size,
+            num_workers=self.n_workers,
+            sampler=sampler,
+        )
+
+    def set_task(self, task_id: int):
+        self._task_id = task_id
+        self.loader.sampler.set_task(self._task_id)
+
+File Path: clhive/scenarios/continual_sampler.py
+Content:
+from typing import Optional
+
+import numpy as np
+import torch
+from torch.utils.data import Sampler
+
+from ..data import ContinualDataset
+
+
+class ContinualSampler(Sampler):
+    def __init__(
+        self,
+        dataset,
+        n_tasks: int,
+        smooth_boundary: Optional[bool] = False,
+        normal_targets_per_task: Optional[bool] = False,
+    ):
+        """[summary]
+
+        Args:
+            dataset: [description]
+            n_tasks (int): [description]
+            smooth_boundary (bool, optional): [description]. Defaults to False.
+        """
+
+        self.dataset = dataset
+        self.n_tasks = n_tasks
+        self.smooth_boundary = smooth_boundary
+        self.normal_targets_per_task = normal_targets_per_task
+
+        # print(dataset.data, dataset.targets)
+        if isinstance(dataset, torch.utils.data.Subset):
+            ds_targets = np.array(dataset.dataset.targets)[dataset.indices]
+        else:
+            ds_targets = dataset.dataset.targets
+
+        self.classes = np.unique(ds_targets)
+
+        ds_targets = np.array(ds_targets)
+        self.n_samples = ds_targets.shape[0]
+        self.n_classes = self.classes.shape[0]
+
+        assert (
+            self.n_classes % n_tasks == 0
+        ), f"Cannot break {self.n_classes} classes into {n_tasks} tasks."
+        self.cpt = self.n_classes // n_tasks
+
+        self.sample_all_seen_tasks = False
+
+        self._current_task = None
+        self.target_indices = {}
+
+        # for smooth datasets
+        self.t = 0
+        self.per_class_samples_left = torch.zeros(self.classes.shape[0]).int()
+
+        for label in self.classes:
+            self.target_indices[label] = np.squeeze(np.argwhere(ds_targets == label))
+            np.random.shuffle(self.target_indices[label])
+            self.per_class_samples_left[label] = self.target_indices[label].shape[0]
+
+    @property
+    def current_task(self):
+        return self._current_task
+
+    def set_task(self, task_id: int, sample_all_seen_tasks: bool = False):
+        self._current_task = task_id
+        self.dataset._set_task(task_id)
+        self.sample_all_seen_tasks = sample_all_seen_tasks
+
+    def _fetch_task_samples(self, task_id):
+        if self.sample_all_seen_tasks:
+            task_classes = self.classes[: self.cpt * (task_id + 1)]
+        else:
+            task_classes = self.classes[self.cpt * task_id : self.cpt * (task_id + 1)]
+
+        task_samples = []
+
+        for t in task_classes:
+            t_indices = self.target_indices[t]
+            task_samples += [t_indices]
+
+        task_samples = np.concatenate(task_samples)
+        np.random.shuffle(task_samples)
+
+        self.task_samples = task_samples
+
+    def __iter__(self):
+        self._fetch_task_samples(self._current_task)
+        for item in self.task_samples:
+            yield item
+
+    def __len__(self):
+        samples_per_task = self.n_samples // self.n_tasks
+        return samples_per_task
+
+
+def make_val_from_train(dataset: ContinualDataset, split: float = 0.9):
+    """Create a validation set from training set.
+
+    Args:
+        dataset ([ContinualDataset]): [description]
+        split (float, optional): [description]. Defaults to .9.
+
+    Returns:
+        [type]: [description]
+    """
+
+    train_ds, val_ds = deepcopy(dataset), deepcopy(dataset)
+
+    train_idx, val_idx = [], []
+    for label in np.unique(dataset.targets):
+        label_idx = np.squeeze(np.argwhere(dataset.targets == label))
+        split_idx = int(label_idx.shape[0] * split)
+        train_idx += [label_idx[:split_idx]]
+        val_idx += [label_idx[split_idx:]]
+
+    train_idx = np.concatenate(train_idx)
+    val_idx = np.concatenate(val_idx)
+
+    train_ds = Subset(dataset, train_idx)
+    val_ds = Subset(dataset, val_idx)
+
+    return train_ds, val_ds
+
+File Path: clhive/scenarios/task_incremental.py
+Content:
+from typing import Optional
+
+from .class_incremental import ClassIncremental
+
+
+class TaskIncremental(ClassIncremental):
+    def __init__(
+        self,
+        dataset,
+        n_tasks: int,
+        batch_size: int,
+        n_workers: Optional[int] = 0,
+        smooth_task_boundary: Optional[bool] = False,
+    ) -> "TaskIncremental":
+        """_summary_
+
+        Args:
+            dataset (_type_): _description_
+            n_tasks (int): _description_
+            batch_size (int): _description_
+            n_workers (Optional[int], optional): _description_. Defaults to 0.
+            smooth_task_boundary (Optional[bool], optional): _description_. Defaults to False.
+
+        Returns:
+            TaskIncremental: _description_
+        """
+        super().__init__(dataset, n_tasks, batch_size, n_workers, smooth_task_boundary)
+
+        # Normalize labels per task for task-incremental scenario
+        self.dataset.normalize_targets_per_task = True
+
+File Path: clhive/utils/__init__.py
+Content:
+from .generic import get_optimizer
+from .console_display import ConsoleDisplay
+
+File Path: clhive/utils/console_display.py
+Content:
+from typing import Any, Dict, List, Optional
+
+from rich import box
+from rich.console import Console
+from rich.live import Live
+from rich.table import Table
+from rich.theme import Theme
+from rich.progress import (
+    Progress,
+    Column,
+    BarColumn,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
+
+class ConsoleDisplay:
+    def __init__(
+        self,
+        n_tasks: int,
+        progress_metrics_columns: Optional[Dict[str, Any]] = None,
+        primary_style: Optional[str] = "light_goldenrod3",
+        accent_style: Optional[str] = "dark_sea_green4",
+        secondary_accent_style: Optional[str] = "",
+    ):
+        self.primary_style = primary_style
+        self.accent_style = accent_style
+        self.secondary_accent_style = secondary_accent_style
+        self.theme = Theme({"repr.number": f"{self.primary_style}"})
+
+        self.console = Console(theme=self.theme)
+        self.table = self.create_metrics_table(n_tasks)
+        self.create_progress(metrics_columns=progress_metrics_columns)
+        self.progress_bar = None
+
+        self.body = Table.grid(expand=True)
+        self.body.add_row(self.table)
+        self.body.add_row(self.progress)
+        self.display = Live(self.body, refresh_per_second=10)
+
+    def start(self):
+        self.display.start()
+
+    def stop(self):
+        self.progress.remove_task(self.progress_bar)
+        self.display.stop()
+
+    def create_metrics_table(self, n_tasks: int) -> Table:
+        """Creates the main table reporting performance across tasks."""
+        table = Table(box=box.ROUNDED, header_style=f"bold {self.primary_style}")
+        table.add_column("Task\nID")
+        for t in range(n_tasks):
+            table.add_column(f"Task {t}\nAcc", justify="center")
+        table.add_column("Avg.\nAcc.", justify="center", style=f"{self.primary_style}")
+        table.add_column("Avg.\nFgt.", justify="center", style=f"{self.primary_style}")
+
+        return table
+
+    def create_progress(
+        self,
+        metrics_columns: Optional[Dict[str, Any]] = None,
+    ):
+
+        main_columns = {}
+
+        main_columns["spinner"] = SpinnerColumn()
+        main_columns["description"] = TextColumn("{task.description}")
+        main_columns["seperator"] = TextColumn("|")
+        main_columns["dot"] = TextColumn("•")
+        main_columns["epoch"] = TextColumn("Epoch")
+        main_columns["bar"] = BarColumn(
+            bar_width=40, style="grey70", complete_style=self.accent_style
+        )
+        main_columns["percentage"] = TextColumn(
+            "[progress.percentage]{task.percentage:>3.0f}%"
+        )
+        main_columns["time_elapsed"] = TimeElapsedColumn()
+
+        columns = [*list(main_columns.values())]
+        if metrics_columns is not None:
+            for key, value in metrics_columns.items():
+                assert (
+                    key not in main_columns.keys()
+                ), f"Duplicate key error, `{key}` already exists in the default main_columns."
+                main_columns[key] = TextColumn(text_format=metrics_columns[key])
+                columns.extend([main_columns["seperator"], main_columns[key]])
+
+        self.columns = main_columns
+        self.progress = Progress(*columns)
+
+    def add_progress_bar(self, description: str, total_steps: int):
+        """_summary_
+
+        Args:
+            description (str): _description_
+            total_steps (int): _description_
+        """
+        if self.progress_bar is not None:
+            self.progress.remove_task(self.progress_bar)
+
+        self.progress_bar = self.progress.add_task(description, total=total_steps)
+
+    def update_table(self, metrics: List[float]):
+        """_summary_
+
+        Args:
+            metrics (List[float]): _description_
+        """
+        assert len(metrics) == len(
+            self.table.columns
+        ), "Number of metrics does not match the number of columns."
+        metrics = [str(x) for x in metrics]
+        self.table.add_row(*metrics)
+        self.display.update(self.body)
+
+    def update_progress_bar(
+        self,
+        epoch: int,
+        advance: Optional[int] = 1,
+        metrics_columns: Optional[Dict[str, Any]] = None,
+    ):
+
+        self.columns["epoch"].text_format = f"Epoch: {epoch}"
+        for key, value in metrics_columns.items():
+            self.columns[key].text_format = f"{key}: {str(value)}"
+
+        self.progress.update(self.progress_bar, advance=advance)
+        self.display.update(self.body)
+
+    def reset_progress_bar(self):
+        if self.progress_bar is not None:
+            self.progress.reset(self.progress_bar)
+
+
+if __name__ == "__main__":
+    import time
+
+    stats = [
+        [50, 60, 70, 80, 90],
+        [50, 60, 70, 80, 90],
+        [50, 60, 70, 80, 90],
+        [50, 60, 70, 80, 90],
+        [50, 60, 70, 80, 90],
+    ]
+    progress_metrics = {"train/loss": 50.0}
+
+    display = ConsoleDisplay(n_tasks=5, progress_metrics_columns=progress_metrics)
+    # display.create_progress(metrics_columns={"train/loss": 100.0})
+
+    display.start()
+    for t in range(5):
+        display.add_progress_bar(
+            description=f"Task {t} Training",
+            total_steps=2 * 100,
+        )
+        for e in range(2):
+            for i in range(100):
+                time.sleep(0.01)
+                progress_metrics["train/loss"] -= 0.5
+                display.update_progress_bar(
+                    epoch=e, advance=1, metrics_columns=progress_metrics
+                )
+
+        display.update_table(metrics=[t, *stats[t], 70.0, 0.0])
+
+    display.stop()
+
+File Path: clhive/utils/evaluators/__init__.py
+Content:
+from .base import BaseEvaluator
+from .continual_evaluator import ContinualEvaluator
+from .probe_evaluator import ProbeEvaluator
+
+File Path: clhive/utils/evaluators/base.py
+Content:
+from typing import Any, Dict, List, Optional, Tuple, Union
+import torch
+
+from ...loggers import BaseLogger, Logger
+from ...methods import BaseMethod
+from ...scenarios import ClassIncremental, TaskIncremental
+
+
+class BaseEvaluator:
+    def __init__(
+        self,
+        method: BaseMethod,
+        eval_scenario: Union[ClassIncremental, TaskIncremental],
+        logger: Optional[BaseLogger] = None,
+        device: Optional[torch.device] = None,
+    ) -> "BaseEvaluator":
+        """_summary_
+
+        Args:
+            method (BaseMethod): _description_
+            eval_scenario (Union[ClassIncremental, TaskIncremental]): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            device (Optional[torch.device], optional): _description_. Defaults to None.
+
+        Returns:
+            BaseEvaluator: _description_
+        """
+        if device is None:
+            device = torch.device("cpu")
+        self.device = device
+
+        self.agent = method.to(self.device)
+        self.eval_scenario = eval_scenario
+
+        if logger is None:
+            logger = Logger(n_tasks=self.eval_scenario.n_tasks)
+        self.logger = logger
+
+    @torch.no_grad()
+    def _evaluate(self, task_id: int):
+        pass
+
+    def on_eval_start(self):
+        """ """
+        pass
+
+    def on_eval_end(self):
+        """ """
+        pass
+
+    def fit(self, task_id: int):
+        pass
+
+File Path: clhive/utils/evaluators/continual_evaluator.py
+Content:
+import copy
+import os
+import time
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+from .base import BaseEvaluator
+from ...loggers import BaseLogger, Logger
+from ...methods import BaseMethod
+from ...scenarios import ClassIncremental, TaskIncremental
+
+
+class ContinualEvaluator(BaseEvaluator):
+    def __init__(
+        self,
+        method: BaseMethod,
+        eval_scenario: Union[ClassIncremental, TaskIncremental],
+        logger: Optional[BaseLogger] = None,
+        device: Optional[torch.device] = None,
+    ) -> "ContinualEvaluator":
+        """_summary_
+
+        Args:
+            method (BaseMethod): _description_
+            eval_scenario (Union[ClassIncremental, TaskIncremental]): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            device (Optional[torch.device], optional): _description_. Defaults to None.
+
+        Returns:
+            ContinualEvaluator: _description_
+        """
+
+        super().__init__(method, eval_scenario, logger, device)
+
+    @torch.no_grad()
+    def _evaluate(self, task_id: int) -> List[float]:
+        """_summary_
+
+        Args:
+            task_id (int): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        self.agent.eval()
+        tasks_accs = np.zeros(shape=self.eval_scenario.n_tasks)
+
+        for task_id, eval_loader in enumerate(self.eval_scenario):
+            n_ok, n_total = 0, 0
+
+            # iterate over samples from task
+            for idx, (x, y, t) in enumerate(eval_loader):
+                x, y, t = x.to(self.device), y.to(self.device), t.to(self.device)
+
+                logits = self.agent.predict(x=x, t=t)
+
+                n_total += x.size(0)
+                if logits is not None:
+                    pred = logits.max(1)[1]
+                    n_ok += pred.eq(y).sum().item()
+
+            tasks_accs[task_id] = (n_ok / n_total) * 100
+
+        return tasks_accs
+
+    def on_eval_start(self):
+        """ """
+        pass
+
+    def on_eval_end(self, tasks_accs: List[float], current_task_id: int) -> None:
+        """ """
+        avg_obs_acc = np.mean(tasks_accs[: current_task_id + 1])
+        avg_anytime_acc = np.mean(tasks_accs)
+        print(
+            "\n",
+            "\t".join([str(int(x)) for x in tasks_accs]),
+            f"  |  Avg observed Acc: {avg_obs_acc:.2f}  |  Avg anytime Acc: {avg_anytime_acc:.2f}",
+        )
+
+    def fit(self, current_task_id: int) -> None:
+        """_summary_
+
+        Args:
+            current_task_id (int): _description_
+        """
+        self.on_eval_start()
+
+        tasks_accs = self._evaluate(task_id=current_task_id)
+
+        self.on_eval_end(tasks_accs=tasks_accs, current_task_id=current_task_id)
+
+File Path: clhive/utils/evaluators/probe_evaluator.py
+Content:
+import copy
+import os
+import time
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+
+from .base import BaseEvaluator
+from ...loggers import BaseLogger, Logger
+from ...methods import BaseMethod
+from ...models import ContinualModel, LinearClassifier
+from ...scenarios import ClassIncremental, TaskIncremental
+
+
+class ProbeEvaluator(BaseEvaluator):
+    def __init__(
+        self,
+        method: BaseMethod,
+        train_scenario: Union[ClassIncremental, TaskIncremental],
+        eval_scenario: Union[ClassIncremental, TaskIncremental],
+        n_epochs: int,
+        logger: Optional[BaseLogger] = None,
+        device: Optional[torch.device] = None,
+    ) -> "ProbeEvaluator":
+        """_summary_
+
+        Args:
+            method (BaseMethod): _description_
+            train_scenario (Union[ClassIncremental, TaskIncremental]): _description_
+            eval_scenario (Union[ClassIncremental, TaskIncremental]): _description_
+            n_epochs (int): _description_
+            logger (Optional[BaseLogger], optional): _description_. Defaults to None.
+            device (Optional[torch.device], optional): _description_. Defaults to None.
+
+        Returns:
+            ProbeEvaluator: _description_
+        """
+
+        super().__init__(method, eval_scenario, logger, device)
+
+        self.train_scenario = train_scenario
+        self.n_epochs = n_epochs
+        self.linear_heads = {}
+
+    def _train_linear_heads(self, task_id: int) -> None:
+
+        if type(self.train_scenario) is TaskIncremental:
+            probe_n_classes = self.train_scenario.loader.sampler.cpt
+            sample_all_seen_tasks = False
+            task_list = [*range(self.train_scenario.n_tasks)]
+        else:
+            probe_n_classes = self.train_scenario.n_classes
+            sample_all_seen_tasks = True
+            task_list = [task_id]
+
+        self.linear_heads = {
+            str(t): LinearClassifier(
+                input_size=int(self.agent.model.backbone.last_hid),
+                output_size=probe_n_classes,
+            ).to(self.device)
+            for t in task_list
+        }
+        self.agent.eval()
+
+        train_loader = self.train_scenario.loader
+
+        for task_t in task_list:
+
+            train_loader.sampler.set_task(
+                task_id=task_t,
+                sample_all_seen_tasks=type(self.train_scenario) is ClassIncremental,
+            )
+            optim = torch.optim.AdamW(
+                self.linear_heads[str(task_t)].parameters(),
+                lr=1e-4,
+                weight_decay=5e-4,
+            )
+
+            for epoch in range(self.n_epochs):
+                for _, (x, y, t) in enumerate(train_loader):
+                    x, y, t = x.to(self.device), y.to(self.device), t.to(self.device)
+
+                    with torch.no_grad():
+                        features = self.agent.model.forward_backbone(x)
+                    logits = self.linear_heads[str(task_t)](features.detach())
+                    loss = F.cross_entropy(logits, y)
+
+                    optim.zero_grad()
+                    loss.backward()
+                    optim.step()
+
+                    print(
+                        f"Linear head {task_t} | Epoch: {epoch + 1} / {self.n_epochs} - Training loss: {loss}",
+                        end="\r",
+                    )
+
+    @torch.no_grad()
+    def _evaluate(self, task_id: int) -> List[float]:
+        """_summary_
+
+        Args:
+            task_id (int): _description_
+        """
+        self.agent.eval()
+        tasks_accs = np.zeros(shape=self.eval_scenario.n_tasks)
+
+        for task_t, eval_loader in enumerate(self.eval_scenario):
+            n_ok, n_total = 0, 0
+
+            # iterate over samples from task
+            for idx, (x, y, t) in enumerate(eval_loader):
+                x, y, t = x.to(self.device), y.to(self.device), t.to(self.device)
+
+                probe_id = task_id
+                if type(self.eval_scenario) is TaskIncremental:
+                    probe_id = task_t
+
+                features = self.agent.model.forward_backbone(x)
+                logits = self.linear_heads[str(probe_id)](features)
+
+                n_total += x.size(0)
+                if logits is not None:
+                    pred = logits.max(1)[1]
+                    n_ok += pred.eq(y).sum().item()
+
+            tasks_accs[task_t] = (n_ok / n_total) * 100
+
+        return tasks_accs
+
+    def on_eval_start(self):
+        """ """
+        pass
+
+    def on_eval_end(self, tasks_accs: List[float], current_task_id: int) -> None:
+        """ """
+        avg_obs_acc = np.mean(tasks_accs[: current_task_id + 1])
+        avg_anytime_acc = np.mean(tasks_accs)
+        print(
+            "\n",
+            "\t".join([str(int(x)) for x in tasks_accs]),
+            f"  |  Avg observed Acc: {avg_obs_acc:.2f}  |  Avg anytime Acc: {avg_anytime_acc:.2f}",
+        )
+
+        # Reset train_scenario
+        self.train_scenario.set_task(task_id=current_task_id + 1)
+
+    def fit(self, current_task_id: int = None) -> None:
+        """_summary_
+
+        Args:
+            current_task_id (int, optional): _description_. Defaults to None.
+        """
+        self.on_eval_start()
+
+        self._train_linear_heads(task_id=current_task_id)
+        tasks_accs = self._evaluate(task_id=current_task_id)
+
+        self.on_eval_end(tasks_accs, current_task_id)
+
+File Path: clhive/utils/generic.py
+Content:
+from typing import Any, Callable, Dict, List, Optional
+from rich.console import Console
+
+import torch
+
+
+def get_optimizer(config: Dict[str, Any]):
+    assert hasattr(
+        torch.optim, config.name
+    ), f"{config.name} is not a registered optimizer in torch.optim"
+    optim = getattr(torch.optim, config.name)(**config)
+    return optim
+
+
+def spinner_animation(message: str, spinner_type: Optional[str] = "dots"):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            console = Console()
+            with console.status(message, spinner=spinner_type):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+# Taken from AML codebase
+
+
+def load_best_args(
+    args,
+    target="acc",
+    avg_over="run",
+    keep=["method", "use_augs", "task_free", "dataset", "mem_size", "mir_head_only"],
+):
+    # load the dataframe with the hparam runs
+    df = pd.read_csv("sweeps/hp_result.csv")
+
+    # subselect the appropriate runs
+    for key in keep:
+        df = df[df[key] == getattr(args, key)]
+
+    # which arg to overwrite ?
+    unique = df.nunique()
+    arg_list = list(unique[unique > 1].index)
+    arg_list.remove(avg_over)
+    arg_list.remove(target)
+
+    # find the best run
+    acc_per_cfg = df.groupby(arg_list)[target].agg(["mean", "std"])
+    acc_per_cfg = acc_per_cfg.rename(
+        columns={"mean": f"{target}_mean", "std": f"{target}_std"}
+    )
+    arg_values = acc_per_cfg[f"{target}_mean"].idxmax()
+
+    if not isinstance(arg_values, Iterable):
+        arg_values = [arg_values]
+
+    print("overwriting args")
+    for (k, v) in zip(arg_list, arg_values):
+        print(f"{k} from {getattr(args, k)} to {v}")
+        setattr(args, k, v)
+
+
+def sho_(x, nrow=8):
+    x = x * 0.5 + 0.5
+    from torchvision.utils import save_image
+    from PIL import Image
+
+    if x.ndim == 5:
+        nrow = x.size(1)
+        x = x.reshape(-1, *x.shape[2:])
+
+    save_image(x, "tmp.png", nrow=nrow)
+    Image.open("tmp.png").show()
+
+
+def save_(x, name="tmp.png"):
+    x = x * 0.5 + 0.5
+    from torchvision.utils import save_image
+    from PIL import Image
+
+    if x.ndim == 5:
+        nrow = x.size(1)
+        x = x.reshape(-1, *x.shape[2:])
+
+    save_image(x, name)
+
+
+# --- MIR utils
+""" For MIR """
+
+
+def overwrite_grad(pp, new_grad, grad_dims):
+    """
+    This is used to overwrite the gradients with a new gradient
+    vector, whenever violations occur.
+    pp: parameters
+    newgrad: corrected gradient
+    grad_dims: list storing number of parameters at each layer
+    """
+    cnt = 0
+    for param in pp():
+        param.grad = torch.zeros_like(param.data)
+        beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
+        en = sum(grad_dims[: cnt + 1])
+        this_grad = new_grad[beg:en].contiguous().view(param.data.size())
+        param.grad.data.copy_(this_grad)
+        cnt += 1
+
+
+def get_grad_vector(pp, grad_dims):
+    """
+    gather the gradients in one vector
+    """
+    grads = torch.zeros(size=(sum(grad_dims),), device=pp[0].device)
+
+    cnt = 0
+    for param in pp:
+        if param.grad is not None:
+            beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
+            en = sum(grad_dims[: cnt + 1])
+            grads[beg:en].copy_(param.grad.data.view(-1))
+        cnt += 1
+    return grads
+
+
+def get_future_step_parameters(this_net, grad_vector, grad_dims, lr=1):
+    """
+    computes theta - delta theta
+    :param this_net:
+    :param grad_vector:
+    :return:
+    """
+    new_net = copy.deepcopy(this_net)
+    overwrite_grad(new_net.parameters, grad_vector, grad_dims)
+    with torch.no_grad():
+        for param in new_net.parameters():
+            if param.grad is not None:
+                param.data = param.data - lr * param.grad.data
+    return new_net
+
+
+def get_grad_dims(self):
+    self.grad_dims = []
+    for param in self.net.parameters():
+        self.grad_dims.append(param.data.numel())
+
+
+# Taken from
+# https://github.com/aimagelab/mammoth/blob/cb9a36d788d6ad051c9eee0da358b25421d909f5/models/gem.py#L34
+def store_grad(params, grads, grad_dims):
+    """
+    This stores parameter gradients of past tasks.
+    pp: parameters
+    grads: gradients
+    grad_dims: list with number of parameters per layers
+    """
+    # store the gradients
+    grads.fill_(0.0)
+    count = 0
+    for param in params():
+        if param.grad is not None:
+            begin = 0 if count == 0 else sum(grad_dims[:count])
+            end = np.sum(grad_dims[: count + 1])
+            grads[begin:end].copy_(param.grad.data.view(-1))
+        count += 1
+
+
+# Taken from
+# https://github.com/aimagelab/mammoth/blob/cb9a36d788d6ad051c9eee0da358b25421d909f5/models/agem.py#L21
+def project(gxy: torch.Tensor, ger: torch.Tensor) -> torch.Tensor:
+    corr = torch.dot(gxy, ger) / torch.dot(ger, ger)
+    return gxy - corr * ger
+
+File Path: clhive/utils/registry_utils.py
+Content:
+import importlib
+import logging
+import os
+import sys
+from pathlib import Path
+
+
+def import_all_modules(root: str, base_module: str) -> None:
+    for file in os.listdir(root):
+        if file.endswith((".py", ".pyc")) and not file.startswith("_"):
+            module = file[: file.find(".py")]
+            if module not in sys.modules:
+                module_name = ".".join([base_module, module])
+                importlib.import_module(module_name)
+
+
+def import_all_packages_from_directory(root: str) -> None:
+    """Automatically imports all packages under the root directory.
+    For instance, if your directories look like:
+        root / foo / __init__.py
+        root / foo / abc.py
+        root / bar.py
+        root / baz / xyz.py
+    This function will import the package foo, but not bar or baz."""
+
+    for file in os.listdir(root):
+        # Try to import each file in the directory. Our previous implementation
+        # would look for directories here and see if there's a __init__.py
+        # under that directory, but that turns out to be unreliable while
+        # running on AWS: EFS filesystems cache metadata bits so the directory
+        # and existence checks fail even when the import succeeds. We should
+        # find a better workaround eventually, but this will do for now.
+        try:
+            file = Path(file)
+            module_name = file.name
+            # Dots have special meaning in Python packages -- it's a relative
+            # import or a subpackage. Skip these.
+            if "." not in module_name and module_name not in sys.modules:
+                logging.debug(f"Automatically importing {module_name}")
+                importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            pass
+
+File Path: clhive/utils/trainer.py
+Content:
+from typing import Optional, Union
+import copy
+import os
+import time
+
+import torch
+from torch.utils.data import DataLoader
+
+from .evaluators import BaseEvaluator
+from ..loggers import BaseLogger, Logger
+from ..methods import BaseMethod
+from ..models import ContinualModel
+from ..scenarios import ClassIncremental, TaskIncremental
+
+
+class Trainer:
+    def __init__(
+        self,
+        method: BaseMethod,
+        scenario: Union[ClassIncremental, TaskIncremental],
+        n_epochs: int,
+        evaluator: Optional[BaseEvaluator] = None,
+        logger: Optional[BaseLogger] = None,
+        device: Optional[torch.device] = None,
+    ) -> "Trainer":
+
+        if device is None:
+            device = torch.device("cpu")
+        self.device = device
+
+        self.agent = method.to(self.device)
+        self.scenario = scenario
+        self.n_epochs = n_epochs
+        self.evaluator = evaluator
+
+        if logger is None:
+            logger = Logger(n_tasks=self.scenario.n_tasks)
+        self.logger = logger
+
+    def _train_task(self, task_id: int, train_loader: DataLoader):
+
+        self.agent.train()
+        self.agent.on_task_start()
+
+        start_time = time.time()
+
+        print(f"\n>>> Task #{task_id} --> Model Training")
+
+        for epoch in range(self.n_epochs):
+            # adjust learning rate
+
+            for idx, (x, y, t) in enumerate(train_loader):
+                x, y, t = x.to(self.device), y.to(self.device), t.to(self.device)
+                loss = self.agent.observe(x, y, t)
+
+                print(
+                    f"Epoch: {epoch + 1} / {self.n_epochs} | {idx} / {len(train_loader)} - Loss: {loss}",
+                    end="\r",
+                )
+
+        print(f"Task {task_id}. Time {time.time() - start_time:.2f}")
+
+    def set_evaluator(self, evaluator: BaseEvaluator):
+        self.evaluator = evaluator
+
+    def on_task_start(self, task_id: int):
+        """ """
+        pass
+
+    def on_task_end(self, task_id: int):
+        """_summary_
+
+        Args:
+            task_id (int): _description_
+        """
+        # Agent on_task_finished
+        finished_task_id = self.agent._current_task_id
+        self.agent.on_task_end()
+
+        # Launch evaluators
+        if self.evaluator is not None:
+            self.evaluator.fit(current_task_id=finished_task_id)
+
+    def on_training_start(self):
+        """ """
+        pass
+
+    def on_training_end(self):
+        """ """
+        pass
+
+    def fit(self):
+        """ """
+        self.on_training_start()
+
+        for task_id, train_loader in enumerate(self.scenario):
+            self.on_task_start(task_id)
+
+            self._train_task(task_id=task_id, train_loader=train_loader)
+
+            self.on_task_end(task_id)
+
+        self.on_training_end()
+
+File Path: docs/conf.py
+Content:
+# Configuration file for the Sphinx documentation builder.
+#
+# This file only contains a selection of the most common options. For a full
+# list see the documentation:
+# https://www.sphinx-doc.org/en/master/usage/configuration.html
+
+# -- Path setup --------------------------------------------------------------
+
+# If extensions (or modules to document with autodoc) are in another directory,
+# add these directories to sys.path here. If the directory is relative to the
+# documentation root, use os.path.abspath to make it absolute, like shown here.
+#
+# import os
+# import sys
+# sys.path.insert(0, os.path.abspath('.'))
+
+
+# -- Project information -----------------------------------------------------
+
+project = "CLHive"
+copyright = "2022, Nader Asadi"
+author = "Nader Asadi"
+
+# The full version, including alpha/beta/rc tags
+release = "0.1.0"
+
+
+# -- General configuration ---------------------------------------------------
+
+# Add any Sphinx extension module names here, as strings. They can be
+# extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
+# ones.
+extensions = []
+
+# Add any paths that contain templates here, relative to this directory.
+templates_path = ["_templates"]
+
+# List of patterns, relative to source directory, that match files and
+# directories to ignore when looking for source files.
+# This pattern also affects html_static_path and html_extra_path.
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+
+# -- Options for HTML output -------------------------------------------------
+
+# The theme to use for HTML and HTML Help pages.  See the documentation for
+# a list of builtin themes.
+#
+html_theme = "sphinx_rtd_theme"
+
+# Add any paths that contain custom static files (such as style sheets) here,
+# relative to this directory. They are copied after the builtin static files,
+# so a file named "default.css" will overwrite the builtin "default.css".
+html_static_path = ["_static"]
+
+File Path: examples/__init__.py
+Content:
+
+File Path: examples/er.py
+Content:
+import torch
+from torch.optim import SGD, AdamW
+
+from clhive.data import SplitCIFAR100
+from clhive.utils.evaluators import ContinualEvaluator, ProbeEvaluator
+from clhive.scenarios import ClassIncremental, TaskIncremental
+from clhive.models import ContinualModel
+from clhive.methods import auto_method
+from clhive import Trainer, ReplayBuffer
+
+
+# HParams
+batch_size = 32
+n_tasks = 5
+buffer_capacity = 50 * 10
+
+# Train dataset and scenario
+dataset = SplitCIFAR100(root="../cl-datasets/")
+scenario = ClassIncremental(
+    dataset=dataset, n_tasks=n_tasks, batch_size=batch_size, n_workers=6
+)
+
+print(f"Number of tasks: {scenario.n_tasks} | Number of classes: {scenario.n_classes}")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Model
+model = ContinualModel.auto_model("resnet18", scenario).to(device)
+
+# Replay buffer and ER agent
+buffer = ReplayBuffer(capacity=buffer_capacity, device=device)
+agent = auto_method(
+    name="er_ace",
+    model=model,
+    optim=SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4),
+    buffer=buffer,
+)
+
+# Evaluator
+test_dataset = SplitCIFAR100(root="../cl-datasets/", train=False)
+test_scenario = ClassIncremental(
+    test_dataset, n_tasks=n_tasks, batch_size=batch_size, n_workers=6
+)
+evaluator = ContinualEvaluator(method=agent, eval_scenario=test_scenario, device=device)
+
+# Trainer
+trainer = Trainer(
+    method=agent, scenario=scenario, evaluator=evaluator, n_epochs=5, device=device
+)
+trainer.fit()
+
+File Path: examples/test_rich.py
+Content:
+import time
+
+from rich import box
+from rich.console import Console
+from rich.live import Live
+from rich.table import Table
+from rich.theme import Theme
+from rich.progress import (
+    Progress,
+    Column,
+    BarColumn,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
+
+# Theme
+theme = Theme({"repr.number": "light_goldenrod3"})
+
+# Table
+n_tasks = 4
+table = Table(box=box.ROUNDED, header_style="bold light_goldenrod3")
+table.add_column("Task\nID")
+for t in range(n_tasks):
+    table.add_column(f"Task {t}\nAcc", justify="center")
+table.add_column("Avg.\nAcc.", justify="center", style="light_goldenrod3")
+table.add_column("Avg.\nFgt.", justify="center", style="light_goldenrod3")
+
+
+# Progress Bar
+print(Progress.get_default_columns()[2].text_format)
+
+spinner_column = SpinnerColumn()
+text_column = TextColumn("{task.description}")
+seperator = TextColumn("|")
+dot = TextColumn("•")
+epoch_column = TextColumn("Epoch")
+bar_column = BarColumn(bar_width=40, style="grey70", complete_style="dark_sea_green4")
+percent_column = TextColumn("[progress.percentage]{task.percentage:>3.0f}%")
+time_column = TimeElapsedColumn()
+
+progress = Progress(
+    spinner_column,
+    text_column,
+    seperator,
+    epoch_column,
+    bar_column,
+    percent_column,
+    dot,
+    time_column,
+    seperator,
+    expand=False,
+)
+# progress = Progress()
+train_bar = progress.add_task("Task 1 Training", total=10)
+
+
+# Body
+body = Table.grid(expand=True)
+body.add_row(table)
+body.add_row(progress)
+
+console = Console(theme=theme)
+console.print("Summary\nNumber of Tasks: 10")
+
+# Display
+display = Live(body, refresh_per_second=4)
+display.start()
+
+for row in range(10):
+    task_metrics = [f"{row}", "90.3", "91.0", "90.3", "91.0", "90.7", "0.7"]
+    table.add_row(*task_metrics)
+    epoch_column.text_format = f"Epoch {row}"
+    progress.update(train_bar, advance=1)
+    display.update(body)
+    time.sleep(1.0)
+
+progress.remove_task(train_bar)
+display.stop()
+
+File Path: setup.py
+Content:
+import setuptools
+import sys
+import os
+
+try:
+    import builtins
+except ImportError:
+    import __builtin__ as builtins
+
+PATH_ROOT = PATH_ROOT = os.path.dirname(__file__)
+builtins.__clhive_SETUP__ = True
+
+
+def load_description(path_dir=PATH_ROOT, filename="README.md"):
+    """Load long description from readme in the path_dir/ directory"""
+    with open(os.path.join(path_dir, filename)) as f:
+        long_description = f.read()
+    return long_description
+
+
+def load_requirements(path_dir=PATH_ROOT, filename="requirements.txt"):
+    """Load requirements from text file in the path_dir/requirement.txt"""
+    with open(os.path.join(path_dir, filename), "r") as f:
+        packages = f.read().splitlines()
+    return packages
+
+
+if __name__ == "__main__":
+
+    name = "clhive"
+    version = "0.1.0"
+    description = "CLHive is a PyTorch framework for Continual Learning research."
+    author = "Nader Asadi"
+    author_email = "asadi.nader97@gmail.com"
+
+    python_requires = ">=3.6"
+    install_requires = load_requirements()
+
+    project_urls = {
+        "Github": "https://github.com/naderasadi/CLHive",
+    }
+
+    classifiers = [
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Science/Research",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Mathematics",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Software Development",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "License :: OSI Approved :: MIT License",
+    ]
+
+    setuptools.setup(
+        name=name,
+        version=version,
+        author=author,
+        author_email=author_email,
+        description=description,
+        license="MIT",
+        long_description=load_description(),
+        long_description_content_type="text/markdown",
+        install_requires=install_requires,
+        python_requires=python_requires,
+        packages=setuptools.find_packages(),
+        classifiers=classifiers,
+        include_package_data=True,
+        project_urls=project_urls,
+    )
+
+Output:
+{
+    "experimental_code": "The PRD method, with its specific combination of Supervised Contrastive Loss (LSC), Prototype Learning without Contrasts (Lp) using a stop-gradient, and Prototypes-Samples Similarity Distillation (Ld) via KL divergence, is not implemented in the provided repository content. The repository contains implementations for other continual learning methods such as FineTuning, ER, DER, AGEM, EWC, ICARL, and ER_ACE, but not PRD.",
+    "experimental_info": "The experimental settings for the PRD method are not explicitly defined in the provided repository content, as the method itself is not found to be implemented. The repository's configuration files (`clhive/config/configs.py`) show general parameters for methods (e.g., `model: str = \"resnet18\"`, `nf: int = 32`), data (`dataset: str = \"cifar10\"`, `n_tasks: int = 5`, `mem_size: int = 0`), training (`scenario: str = \"single_head\"`, `batch_size: int = 32`, `n_epochs: int = 1`), evaluation, and optimization (SGD, AdamW, learning rates). However, specific settings for PRD's unique losses (LSC, Lp, Ld parameters, prototype initialization, stop-gradient usage, KL divergence weights) are absent."
+}
