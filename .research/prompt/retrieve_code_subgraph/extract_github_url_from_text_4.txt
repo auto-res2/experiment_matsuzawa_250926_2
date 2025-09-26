@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves an optimal Bayesian classifier that utilizes the anisotropic Mahalanobis distance. It models the feature distribution of classes with a multivariate normal distribution N(µy, Σy) and classifies samples by minimizing the Mahalanobis distance to class prototypes. Key techniques to improve and stabilize this approach include: 1) **Covariance Matrix Approximation:** Using either a common covariance matrix (Σ1:t) incrementally updated across tasks or a separate covariance matrix (Σy) for each class. 2) **Correlation Normalization:** Normalizing covariance matrices by making their diagonal elements equal to 1 to ensure comparable scaling factors for distances across different classes. 3) **Covariance Shrinkage:** Applying a shrinkage method (Σs = Σ + γ1V1I + γ2V2(1 − I)) to obtain a full-rank, invertible covariance matrix, especially crucial when the number of samples is less than the feature dimensions. 4) **Tukey’s Ladder of Powers Transformation:** Transforming feature vectors (ϕ(x)λ or log(ϕ(x))) to reduce skewness and make feature distributions more Gaussian-like before computing covariance matrices. The entire classification process is training-free after the initial feature extractor is established.
+
+# GitHub URLs List
+['https://github.com/dipamgoswami/FeCAM']
+Output:
+{
+    "index": 0
+}
