@@ -6,19 +6,20 @@ requires-python = "~=3.10"
 license = {text = "MIT"}
 authors = [{name = "Researcher", email = "research@example.com"}]
 
-[project.dependencies]
-torch = "*"
-torchvision = "*"
-pyyaml = "*"
-matplotlib = "*"
-seaborn = "*"
-numpy = "*"
-scikit-learn = "*"
-pandas = "*"
-tqdm = "*"
-datasets = "*"          # NEW – Hugging-Face datasets
-pillow = "*"
-timm = "*"              # NEW – for ResNet/ViT models
+dependencies = [
+    "torch",
+    "torchvision",
+    "pyyaml",
+    "matplotlib",
+    "seaborn",
+    "numpy",
+    "scikit-learn",
+    "pandas",
+    "tqdm",
+    "datasets",
+    "pillow",
+    "timm"
+]
 
 [build-system]
 requires = ["setuptools", "wheel"]

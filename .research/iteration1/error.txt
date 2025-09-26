@@ -1,0 +1,38 @@
+warning: The `requires-python` specifier (`~=3.10`) in `common-core-foundation` uses the tilde specifier (`~=`) without a patch version. This will be interpreted as `>=3.10, <4`. Did you mean `~=3.10.0` to constrain the version as `>=3.10.0, <3.11`? We recommend only using the tilde specifier with a patch version to avoid ambiguity.
+/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/train.py:68: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler: GradScaler | None = GradScaler(enabled=torch.cuda.is_available())
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/main.py", line 84, in <module>
+    main()
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/main.py", line 75, in main
+    results = run_experiment(cfg)
+              ^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/train.py", line 341, in run_experiment
+    trainer = Trainer(cfg)
+              ^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/train.py", line 176, in __init__
+    self._build_dataloaders()
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/train.py", line 237, in _build_dataloaders
+    self.stream_loader: DataLoader = get_dataloader(self.cfg, split="test")
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/preprocess.py", line 100, in get_dataloader
+    raise ValueError(f"Unknown or unsupported dataset: {dataset_name}")
+ValueError: Unknown or unsupported dataset: RANDOM
+warning: The `requires-python` specifier (`~=3.10`) in `common-core-foundation` uses the tilde specifier (`~=`) without a patch version. This will be interpreted as `>=3.10, <4`. Did you mean `~=3.10.0` to constrain the version as `>=3.10.0, <3.11`? We recommend only using the tilde specifier with a patch version to avoid ambiguity.
+Streaming:   0%|          | 0/8 [00:00<?, ?it/s]                                                Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/main.py", line 84, in <module>
+    main()
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/main.py", line 75, in main
+    results = run_experiment(cfg)
+              ^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/train.py", line 342, in run_experiment
+    results = trainer.run()
+              ^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-28/_work/experiment_matsuzawa_250926_2/experiment_matsuzawa_250926_2/src/train.py", line 268, in run
+    with autocast(enabled=use_amp):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: autocast.__init__() missing 1 required positional argument: 'device_type'

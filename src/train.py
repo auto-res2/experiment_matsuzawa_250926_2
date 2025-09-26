@@ -19,7 +19,7 @@ import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -65,7 +65,7 @@ class TentAdapter(BaseAdapter):
         super().__init__(model)
         self.configure_model()
         self.optimizer = optim.SGD(self._collect_parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-        self.scaler: GradScaler | None = GradScaler(enabled=torch.cuda.is_available())
+        self.scaler: GradScaler | None = GradScaler('cuda', enabled=torch.cuda.is_available())
         self.episodic = False  # can be toggled by caller
 
     # --------------------------------------------------------------------- #

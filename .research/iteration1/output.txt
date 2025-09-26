@@ -1,0 +1,26 @@
+=== [PHASE 1/2] Smoke test start Fri Sep 26 03:45:18 PM UTC 2025 ===
+================ EXPERIMENT DESCRIPTION ================
+Experiment: smoke_test_random
+Dataset: RANDOM
+Model:   TinyCNN
+Method:  es-tent
+--- Hyper-parameters ---
+  method: es-tent
+  lr: 0.01
+  h_low_coeff: 0.5
+  h_high_coeff: 1.0
+========================================================
+
+=== [PHASE 1/2] Smoke test start Fri Sep 26 03:47:14 PM UTC 2025 ===
+================ EXPERIMENT DESCRIPTION ================
+Experiment: smoke_test_random
+Dataset: RANDOM
+Model:   TinyCNN
+Method:  es-tent
+--- Hyper-parameters ---
+  method: es-tent
+  lr: 0.01
+  h_low_coeff: 0.5
+  h_high_coeff: 1.0
+========================================================
+
