@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+DyHPO is a Bayesian Optimization (BO) approach based on Gaussian Processes (GP) designed for gray-box multi-fidelity HPO. Its core is a deep multi-fidelity surrogate model that infers validation scores based on the hyperparameter configuration, the budget, and the past learning curve. This is achieved using a novel deep kernel, K(θ, w) := k(φ(x_i, Y_i,j-1, j; w), φ(x_i', Y_i',j'-1, j'; w); θ). The feature extractor (φ) is a neural network with linear and convolutional layers: it normalizes the budget, concatenates it with the hyperparameter configuration, and feeds it to a linear layer. The learning curve is processed by a 1D convolution followed by global max pooling. Both representations are combined and fed to a squared exponential kernel. Parameters (θ, w) are optimized by maximizing marginal likelihood using Adam. DyHPO extends Expected Improvement (EI) to Multi-Fidelity Expected Improvement (EIMF), which considers the best observed performance for a given budget or overall if no observations for that budget exist. The algorithm dynamically selects the most promising candidate by maximizing EIMF(x, b(x)+1), incrementally training it for one additional budget step and updating the surrogate model after each observation.
+
+# GitHub URLs List
+['https://github.com/releaunifreiburg/DyHPO', 'https://github.com/automl/LCBench', 'https://github.com/google-research/google-research', 'https://github.com/D-X-Y/NAS-Bench-201', 'https://github.com/automl/HpBandSter', 'https://github.com/automl/DEHB', 'https://github.com/dragonfly/dragonfly', 'https://github.com/shib0li/DNN-MFBO']
+Output:
+{
+    "index": 0
+}
