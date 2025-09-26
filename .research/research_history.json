@@ -6,5 +6,82 @@
     "meta-learning generalization few-shot",
     "contrastive prototypical learning",
     "domain adaptation prototypical networks"
+  ],
+  "research_study_list": [
+    {
+      "title": "Learning a Universal Template for Few-shot Dataset Generalization"
+    },
+    {
+      "title": "A Closer Look at Prototype Classifier for Few-shot Image Classification"
+    },
+    {
+      "title": "Interval Bound Interpolation for Few-shot Learning with Few Tasks"
+    },
+    {
+      "title": "ProtoDiff: Learning to Learn Prototypical Networks by Task-Guided Diffusion"
+    },
+    {
+      "title": "FeCAM: Exploiting the Heterogeneity of Class Distributions in Exemplar-Free Continual Learning"
+    },
+    {
+      "title": "A Closer Look at Prototype Classifier for Few-shot Image Classification"
+    },
+    {
+      "title": "Topologically Densified Distributions"
+    },
+    {
+      "title": "Regularizing activations in neural networks via distribution matching with the Wasserstein metric"
+    },
+    {
+      "title": "Semi-supervised Semantic Segmentation with Prototype-based Consistency Regularization"
+    },
+    {
+      "title": "This Looks Like It Rather Than That: ProtoKNN For Similarity-Based Classifiers"
+    },
+    {
+      "title": "Improving Task-Specific Generalization in Few-Shot Learning via Adaptive Vicinal Risk Minimization"
+    },
+    {
+      "title": "Improving Task-Specific Generalization in Few-Shot Learning via Adaptive Vicinal Risk Minimization"
+    },
+    {
+      "title": "Improving Generalization of Meta-Learning With Inverted Regularization at Inner-Level"
+    },
+    {
+      "title": "Learning a Universal Template for Few-shot Dataset Generalization"
+    },
+    {
+      "title": "Meta Dropout: Learning to Perturb Latent Features for Generalization"
+    },
+    {
+      "title": "Prototypical Contrastive Learning of Unsupervised Representations"
+    },
+    {
+      "title": "Prototype-Sample Relation Distillation: Towards Replay-Free Continual Learning"
+    },
+    {
+      "title": "Towards Effective Visual Representations for Partial-Label Learning"
+    },
+    {
+      "title": "FeCAM: Exploiting the Heterogeneity of Class Distributions in Exemplar-Free Continual Learning"
+    },
+    {
+      "title": "Reinforcement Learning with Prototypical Representations"
+    },
+    {
+      "title": "A Prototype-Oriented Framework for Unsupervised Domain Adaptation"
+    },
+    {
+      "title": "Weakly-Supervised Domain Adaptive Semantic Segmentation With Prototypical Contrastive Learning"
+    },
+    {
+      "title": "Universal Domain Adaptation through Self Supervision"
+    },
+    {
+      "title": "Learning Domain-Aware Detection Head with Prompt Tuning"
+    },
+    {
+      "title": "Learning to Adapt to Evolving Domains"
+    }
   ]
 }
