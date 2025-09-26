@@ -6,5 +6,82 @@
     "efficient Bayesian hyperparameter optimization",
     "parallel hyperparameter search",
     "gradient-based hyperparameter tuning"
+  ],
+  "research_study_list": [
+    {
+      "title": "Multi-Fidelity Bayesian Optimization via Deep Neural Networks"
+    },
+    {
+      "title": "Efficient Hyperparameter Optimization with Adaptive Fidelity Identification"
+    },
+    {
+      "title": "Batch Multi-Fidelity Bayesian Optimization with  Deep Auto-Regressive Networks"
+    },
+    {
+      "title": "Supervising the Multi-Fidelity Race of Hyperparameter Configurations"
+    },
+    {
+      "title": "Supervising the Multi-Fidelity Race of Hyperparameter Configurations"
+    },
+    {
+      "title": "Deep Ranking Ensembles for Hyperparameter Optimization"
+    },
+    {
+      "title": "Few-Shot Bayesian Optimization with Deep Kernel Surrogates"
+    },
+    {
+      "title": "Meta-learning Hyperparameter Performance Prediction with Neural Processes"
+    },
+    {
+      "title": "Bayesian Optimization for Iterative Learning"
+    },
+    {
+      "title": "Efficient Hyperparameter Optimization with Adaptive Fidelity Identification"
+    },
+    {
+      "title": "Bayesian Optimization for Iterative Learning"
+    },
+    {
+      "title": "Efficient Hyperparameter Optimization with Adaptive Fidelity Identification"
+    },
+    {
+      "title": "Hyperparameter Optimization through Neural Network Partitioning"
+    },
+    {
+      "title": "Stochastic Marginal Likelihood Gradients using Neural Tangent Kernels"
+    },
+    {
+      "title": "PriorBand: Practical Hyperparameter Optimization in the Age of Deep Learning"
+    },
+    {
+      "title": "Federated Hyperparameter Tuning: Challenges, Baselines, and Connections to Weight-Sharing"
+    },
+    {
+      "title": "PASHA: Efficient HPO and NAS with Progressive Resource Allocation"
+    },
+    {
+      "title": "Hyperparameter Optimization through Neural Network Partitioning"
+    },
+    {
+      "title": "Provably Efficient Online Hyperparameter Optimization with Population-Based Bandits"
+    },
+    {
+      "title": "Differentiable Expected Hypervolume Improvement for Parallel Multi-Objective Bayesian Optimization"
+    },
+    {
+      "title": "Learning to Mutate with Hypergradient Guided Population"
+    },
+    {
+      "title": "Gradient Descent: The Ultimate Optimizer"
+    },
+    {
+      "title": "Stochastic Marginal Likelihood Gradients using Neural Tangent Kernels"
+    },
+    {
+      "title": "Implicit differentiation of Lasso-type models for hyperparameter optimization"
+    },
+    {
+      "title": "AUTOMATA: Gradient Based Data Subset Selection for Compute-Efficient Hyper-parameter Tuning"
+    }
   ]
 }
