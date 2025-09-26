@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The approach is built upon a student-teacher framework with weak-strong augmentation, where the teacher model uses weak augmentation and the student model uses strong augmentation (CutMix). It employs two segmentation heads: a standard linear predictor and a prototype-based predictor (only in the student model). The core idea is to enforce consistency between the predictions of the linear predictor (from the teacher, generating pseudo-labels) and the prototype-based predictor (from the student, trained on strongly augmented data). Prototypes are initialized by clustering features from labeled data and dynamically updated during training using both labeled and high-confidence pseudo-labeled pixels.
+
+# GitHub URLs List
+['https://github.com/HeimingX/semi_seg_proto', 'https://github.com/Haochen-Wang409/U2PL']
+Output:
+{
+    "index": 0
+}
