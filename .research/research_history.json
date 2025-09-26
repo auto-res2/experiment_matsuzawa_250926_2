@@ -6,5 +6,82 @@
     "online domain adaptation speedup",
     "test-time adaptation optimization",
     "convergence speed meta-learning"
+  ],
+  "research_study_list": [
+    {
+      "title": "Test Time Adaptation With Regularized Loss for Weakly Supervised Salient Object Detection"
+    },
+    {
+      "title": "Tent: Fully Test-Time Adaptation by Entropy Minimization"
+    },
+    {
+      "title": "What How and When Should Object Detectors Update in Continually Changing Test Domains?"
+    },
+    {
+      "title": "DELTA: DEGRADATION-FREE FULLY TEST-TIME ADAPTATION"
+    },
+    {
+      "title": "Test-Time Training with Self-Supervision for Generalization under Distribution Shifts"
+    },
+    {
+      "title": "Improved Test-Time Adaptation for Domain Generalization"
+    },
+    {
+      "title": "Active Test-Time Adaptation: Theoretical Analyses and An Algorithm"
+    },
+    {
+      "title": "Damped Anderson Mixing for Deep Reinforcement Learning: Acceleration, Convergence, and Stabilization"
+    },
+    {
+      "title": "Accelerating Parallel Sampling of Diffusion Models"
+    },
+    {
+      "title": "Trainable Weight Averaging: Efficient Training by Optimizing Historical Solutions"
+    },
+    {
+      "title": "Evaluation of Test-Time Adaptation Under Computational Time Constraints"
+    },
+    {
+      "title": "Learning to Adapt to Evolving Domains"
+    },
+    {
+      "title": "Test-Time Adaptation for Depth Completion"
+    },
+    {
+      "title": "Sequential Domain Adaptation by Synthesizing Distributionally Robust Experts"
+    },
+    {
+      "title": "Sequential Domain Adaptation by Synthesizing Distributionally Robust Experts"
+    },
+    {
+      "title": "Tent: Fully Test-Time Adaptation by Entropy Minimization"
+    },
+    {
+      "title": "Test-Time Training with Self-Supervision for Generalization under Distribution Shifts"
+    },
+    {
+      "title": "Test Time Adaptation With Regularized Loss for Weakly Supervised Salient Object Detection"
+    },
+    {
+      "title": "DELTA: DEGRADATION-FREE FULLY TEST-TIME ADAPTATION"
+    },
+    {
+      "title": "Towards Stable Test-time Adaptation in Dynamic Wild World"
+    },
+    {
+      "title": "Optimistic Meta-Gradients"
+    },
+    {
+      "title": "Convergence of Meta-Learning with Task-Specific Adaptation over Partial Parameters"
+    },
+    {
+      "title": "Speedy Performance Estimation for Neural Architecture Search"
+    },
+    {
+      "title": "Speedy Performance Estimation for Neural Architecture Search"
+    },
+    {
+      "title": "Effective Meta-Regularization by Kernelized Proximal Regularization"
+    }
   ]
 }
