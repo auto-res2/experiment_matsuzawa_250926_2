@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+FeCAM is a Bayes classifier built upon the anisotropic Mahalanobis distance, designed for exemplar-free CIL with a frozen feature extractor. It models class feature distributions as multivariate normal. The core methodology involves: 1. Covariance Matrix Approximation: Calculating either a common covariance matrix for all seen classes or a separate, individual covariance matrix for each class from their feature embeddings. 2. Tukey’s Ladder of Powers Transformation: Applying this transformation to feature vectors to reduce skewness and promote more Gaussian-like distributions before covariance computation. 3. Covariance Shrinkage: Implementing a shrinkage method to ensure covariance matrices are full-rank and invertible, especially when samples are fewer than feature dimensions. 4. Correlation Normalization: Normalizing covariance matrices (particularly per-class ones) to make their diagonal elements unity, ensuring comparability of Mahalanobis distances across different classes. Classification is then performed by assigning a test sample to the class whose prototype (mean feature vector) yields the minimum Mahalanobis distance, computed using the transformed, shrunk, and normalized covariance matrices. The approach is training-free for incremental tasks.
+
+# GitHub URLs List
+['https://github.com/dipamgoswami/FeCAM']
+Output:
+{
+    "index": 0
+}
