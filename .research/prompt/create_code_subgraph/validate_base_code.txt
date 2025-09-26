@@ -1,0 +1,306 @@
+
+Input:
+You are an AI code reviewer specializing in validating base experiment foundations.
+
+Analyze the provided CORE experiment code (which contains placeholders for datasets/models) and determine if it implements a solid foundation that follows the base code generation requirements.
+
+# Instructions
+
+## Core Validation Criteria
+Check if the generated base code meets ALL of the following requirements:
+
+1. **Complete Core Logic Implementation**:
+   - Training loops are fully implemented (no placeholders in base training logic)
+   - Evaluation framework is complete with proper metrics calculation
+   - Model saving/loading mechanisms are implemented
+   - Result visualization and figure generation is complete
+
+2. **Proper Placeholder Strategy**:
+   - Uses clear, descriptive placeholders like `DATASET_PLACEHOLDER`, `MODEL_PLACEHOLDER`
+   - Placeholders are ONLY used for dataset-specific and model-specific components
+   - Core algorithm logic has NO placeholders
+   - Includes comments explaining what each placeholder will be replaced with
+
+3. **7-File Structure Compliance**:
+   - Contains EXACTLY these 7 required files:
+     * `src/train.py`
+     * `src/evaluate.py`
+     * `src/preprocess.py`
+     * `src/main.py`
+     * `pyproject.toml`
+     * `config/smoke_test.yaml`
+     * `config/full_experiment.yaml`
+   - No additional utility files, helper modules, or separate components
+   - All functionality is contained within the specified 7 files only
+
+4. **Command Line Interface & Module Structure**:
+   - main.py properly supports `--smoke-test` and `--full-experiment` flags
+   - Configuration system can handle different experimental scenarios
+   - Proper command-line argument parsing
+   - Import statements are compatible with `uv run python -m src.main` execution (relative imports like `from .train import train` are valid)
+
+5. **Publication-Ready Infrastructure**:
+   - Figure generation with proper formatting (PDF output, legends, annotations)
+   - Results saved as JSON files with stdout printing
+   - Consistent result formatting and comparison logic
+   - Proper experimental description output
+
+6. **PyTorch Framework Usage**:
+   - Uses PyTorch exclusively for deep learning components
+   - Proper model definition and training patterns
+   - Appropriate use of existing Python libraries
+
+7. **No Premature Specialization**:
+   - Does NOT assume specific datasets or models (uses placeholders appropriately)
+   - Does NOT contain real dataset loading code (should be placeholder)
+   - Focuses on base algorithm and evaluation framework
+
+## Output Format
+Respond with a JSON object containing:
+- `is_base_code_ready`: boolean - true if ALL base criteria are met, false otherwise
+- `base_code_issue`: string - specific issues found if any criteria are not met, focusing on base foundation quality
+
+# Current Research Method
+{
+    "Open Problems": "Prototypical Networks (ProtoNet) often generalize poorly when class prototypes in an episode are close to each other or have very different ℓ2-norms.  • Intra-episode prototype overlap → ambiguous decision boundaries.  • Large variance of feature-vector norms → violates the theoretical assumptions for nearest-prototype classification.  Both issues can be alleviated by encouraging (i) larger inter-class margins and (ii) constant feature norms, yet the original ProtoNet loss has no such terms.",
+    "Methods": "Prototype Margin Regularised ProtoNet (PMR-Proto) 1. Keep the standard ProtoNet episode loss Lproto (negative log-likelihood using cosine similarity). 2. Add a Prototype Margin loss Lmargin:  For the W way prototypes pj (ℓ2-normalised) in an episode,  Lmargin = (1/(W(W−1))) ∑_{i<j} max(0, cos(p_i,p_j) − τ),  with a small positive margin τ (e.g. 0.2).  This hinge term penalises overly similar prototypes and enforces a minimum angular separation. 3. Add a Feature-Norm loss Lnorm on support embeddings ei:  Lnorm = Var_i(∥ei∥₂).  It drives feature norms toward a constant value, reducing variance highlighted in prior theory. 4. Total loss per episode L = Lproto + λ Lmargin + γ Lnorm  (λ=0.1, γ=0.01 work well across datasets). The modification is local, requires no new parameters and only uses quantities already computed when forming prototypes.",
+    "Experimental Setup": "Datasets miniImageNet and tieredImageNet with the usual 5-way 1-shot / 5-shot splits. Backbone ResNet-12 trained with episodic meta-learning. Baselines Original ProtoNet. Metrics Mean classification accuracy (%) over 600 test episodes with 95% confidence intervals. Training protocol identical to baseline; only the additional losses are activated. Hyper-parameters (τ, λ, γ) tuned on the validation split.",
+    "Experimental Code": "import torch, torch.nn.functional as F\n\ndef episode_loss(embeddings, labels, way, tau=0.2, lam=0.1, gam=0.01):\n    # embeddings: [N, D] support+query, labels: [N]\n    n_support = embeddings.size(0) // 2  # assuming first half support\n    emb_sup, emb_q = embeddings[:n_support], embeddings[n_support:]\n    lbl_sup, lbl_q = labels[:n_support], labels[n_support:]\n\n    # --- standard proto loss ---\n    with torch.no_grad():\n        protos = torch.stack([emb_sup[lbl_sup==c].mean(0) for c in range(way)])\n    protos = F.normalize(protos, dim=1)\n    logits = torch.matmul(F.normalize(emb_q, dim=1), protos.t()) * 10.0\n    L_proto = F.cross_entropy(logits, lbl_q)\n\n    # --- prototype margin loss ---\n    cos_mat = protos @ protos.t()\n    tri_mask = torch.triu(torch.ones_like(cos_mat), 1).bool()\n    cos_pairs = cos_mat[tri_mask]\n    L_margin = F.relu(cos_pairs - tau).mean()\n\n    # --- feature-norm variance loss ---\n    L_norm = emb_sup.norm(dim=1).var()\n\n    return L_proto + lam*L_margin + gam*L_norm",
+    "Expected Result": "PMR-Proto is expected to give a consistent +1.0 ∼ +2.0 pp improvement over ProtoNet on both 1-shot and 5-shot settings, and noticeably tighter confidence intervals (lower variance across test episodes). Ablation should show that Lmargin contributes most in 1-shot (where prototypes are computed from single examples) while Lnorm stabilises 5-shot performance.",
+    "Expected Conclusion": "A tiny, easy-to-implement change to ProtoNet’s objective (two scalar regularisers) yields better-separated prototypes and norm-stable embeddings, directly targeting theoretical weaknesses of prototype classifiers. Because the modification is episode-local, it incurs negligible computation and can be dropped into any existing ProtoNet codebase to obtain immediate gains in few-shot generalisation."
+}
+
+# Experimental Design
+
+## Experiment Strategy
+--------------------------------------------------
+Experiment 1 – Standard Benchmarks & Ablation Study
+--------------------------------------------------
+Goal: Show that PMR-Proto improves accuracy while keeping training cost essentially unchanged.
+
+Setup
+1. Datasets miniImageNet & tieredImageNet.
+2. Tasks 5-way 1-shot & 5-shot, 600 test episodes.
+3. Backbone ResNet-12 (64-160-320-640) with standard augmentation.
+4. Variants to train (same optimiser, schedule, total epochs)
+   a) ProtoNet (baseline)
+   b) PMR-Proto (full model)
+   c) −Lmargin ablation (λ = 0)
+   d) −Lnorm ablation   (γ = 0)
+5. Hardware 1×A100-80GB; max batch ≈80 episodes → <45 GB VRAM.
+6. Metrics
+   • Mean accuracy ±95 % CI.
+   • Relative wall-clock time/episode.
+   • Per-episode variance of query accuracy.
+
+Expected Results
+• Full PMR-Proto outperforms ProtoNet by +1 – 2 pp on every setting; CIs do not overlap.
+• −Lmargin ≈ baseline on 5-shot but drops most on 1-shot, confirming its role.
+• −Lnorm hurts 5-shot more, validating norm stabilisation.
+• Training speed <1 % slower than baseline (no extra network passes).
+
+What it Demonstrates
+A direct, statistically significant accuracy gain with negligible cost, and a clear attribution of the two new loss terms to the two failure modes they were designed for.
+
+--------------------------------------------------
+Experiment 2 – Prototype-Overlap & Norm-Variance Stress Test
+--------------------------------------------------
+Goal: Verify that the regularisers specifically protect against the theoretical weaknesses (overlapping prototypes and large norm variance).
+
+Setup
+A) Synthetic overlap stress.
+   • Build “hard” episodes where all 5 classes come from a single ImageNet super-class (e.g., 5 bird species).   • Repeat with easy (random) episodes.
+B) Norm-variance stress.
+   • For each query image, randomly scale pixel intensities (×0.6 – 1.4) at test time to induce norm variance in embeddings without changing semantics.
+Variants     ProtoNet vs PMR-Proto (weights from Exp-1).
+Metrics
+   • Accuracy drop from easy→hard or no-scale→scale.
+   • Mean pairwise prototype cosine similarity; percentage violating τ.
+   • Variance(‖e‖₂) on support embeddings.
+
+Expected Results
+• Under hard-overlap episodes, ProtoNet accuracy plunges (e.g., −12 pp) whereas PMR-Proto loses far less (≈ −5 pp). Prototype cosine histogram shows >40 % of pairs above τ for ProtoNet vs <5 % for PMR-Proto.
+• Under intensity scaling, ProtoNet accuracy degrades and Var(‖e‖₂) spikes; PMR-Proto keeps both stable.
+
+What it Demonstrates
+The added losses do exactly what they are intended to do: enlarge inter-class margins and reduce sensitivity to norm fluctuations, yielding tangible robustness benefits.
+
+--------------------------------------------------
+Experiment 3 – Cross-Domain & Backbone Generalisation
+--------------------------------------------------
+Goal: Show that the gains are not dataset- or architecture-specific.
+
+Setup
+1. Train on miniImageNet as in Exp-1.
+2. Test (without fine-tuning) on unseen domains:
+   • CUB-200 (birds)  5-way {1,5}-shot.
+   • CIFAR-FS     5-way {1,5}-shot.
+3. Repeat the miniImageNet training with a deeper Conv-Next-Tiny backbone (≈28 M params) to test architecture neutrality.
+4. Variants    ProtoNet vs PMR-Proto.
+Metrics        Mean accuracy ±CI; calibration ECE (expected calibration error).
+
+Expected Results
+• Cross-domain: PMR-Proto retains +1.5 pp over ProtoNet even though neither τ, λ, γ were re-tuned.
+• Conv-Next backbone: similar absolute gain, confirming backbone-agnostic benefit.
+• ECE improves by ~20 %, indicating cleaner decision boundaries.
+
+What it Demonstrates
+The regularisation is generic: it survives domain shift and scales with stronger feature extractors, highlighting the broad applicability of the method.
+
+--------------------------------------------------
+Collectively these three experiments validate effectiveness from three angles: raw benchmark accuracy, targeted robustness to known failure modes, and generality across domains/backbones.
+
+## Experiment Details
+──────────────────────────────────────────────── Experiment 1 – Standard Benchmarks & Ablation Study ────────────────────────────────
+Goal: Verify that PMR-Proto improves accuracy over ProtoNet on canonical few-shot benchmarks with negligible extra cost and to attribute gains to the two new loss terms.
+
+1. Models
+   • Main:  ResNet-12 backbone + ProtoNet head (cosine classifier, temperature=10).  
+     a) ProtoNet (baseline)
+     b) PMR-Proto (λ = 0.1, γ = 0.01, τ = 0.2)
+     c) −Lmargin ablation (λ = 0)
+     d) −Lnorm  ablation (γ = 0)  
+   • Implementation details identical across variants; only loss terms differ.
+
+2. Datasets
+   • miniImageNet   (train/val/test = 64/16/20 classes)
+   • tieredImageNet (351/97/160 classes)  
+   Data are supplied as 84×84 RGB images.
+
+3. Pre-processing
+   • Train-time:  RandomResizedCrop(84), RandomHorizontalFlip(0.5), ColorJitter(0.4,0.4,0.4,0.1), Normalize(IMAGENET_STATS).  
+   • Episode (meta-batch) construction:  n_way = 5, n_shot ∈ {1,5}, n_query = 15 per class (standard).  
+   • Val/Test:  CenterCrop(84) + Normalize.
+
+4. Data split & repetition
+   • 600 episodes/setting for validation, 600 for test.  
+   • Five independent training seeds {12, 23, 34, 45, 56}.  
+   • Model selection: “best-val” = episode-wise accuracy averaged over val episodes; weights with highest average across the 5 seeds are saved.  Test numbers are reported as mean over seeds; 95 % CI computed via Student-t on per-episode accuracies.
+
+5. Optimiser & schedule (identical across variants)
+   • SGD + Nesterov, lr = 0.05, momentum = 0.9, weight-decay = 5e-4  
+   • Cosine decay for 90 epochs (≈ 60,000 episodes) with linear warm-up of 500 episodes.  
+   • Episode batch size B = 80 (fits in 43 GB on A100-80GB).
+
+6. Hyper-parameter sweeps (only for PMR-Proto)
+   • τ ∈ {0.1,0.2,0.3}, λ ∈ {0.05,0.1,0.2}, γ ∈ {0.005,0.01,0.02}. Grid search on validation split; best triple used in final training.  
+   • Learning-rate, temperature, optimiser settings kept constant.
+
+7. Evaluation metrics
+   Primary:  Mean classification accuracy (%) ± 95 % CI.  
+   Secondary:  (i) Per-episode accuracy variance, (ii) Training wall-clock time / episode, (iii) GPU memory peak, (iv) Calibration = Expected Calibration Error (ECE, 15 bins).
+
+8. Robustness checks inside Exp-1 run (light-weight)
+   • Episode-level label-permute noise: swap 5 % of query labels, measure accuracy drop.  
+   • Random Gaussian blur augmentation at test time (σ ∈ [0.0,1.0]): plot accuracy vs σ.
+
+9. Efficiency accounting
+   • FLOPs measured with fvcore’s FlopCountAnalysis on a single 5-shot episode.  
+   • Training speed via wall-clock averaged over 1,000 episodes.  
+   • Memory via pynvml maximum resident GPU memory.
+
+10. Example training snippet
+   ```python
+   import torch, torch.nn as nn, torch.nn.functional as F
+   from pmr_proto import episode_loss  # method from paper listing
+
+   for epi,(imgs,lbls) in enumerate(loader):
+       imgs = imgs.cuda(); lbls = lbls.cuda()
+       feats = model(imgs)           # ResNet-12 backbone
+       loss  = episode_loss(feats, lbls, way=5, tau=0.2)
+       opt.zero_grad(); loss.backward(); opt.step()
+   ```
+
+──────────────────────────────────────────────── Experiment 2 – Prototype-Overlap & Norm-Variance Stress Test ───────────────────────
+Goal: Stress-test the theoretical failure modes (overlapping prototypes, embedding-norm variance) and quantify protection.
+
+1. Models & checkpoints
+   • Use best-val weights from Exp-1 for ProtoNet and PMR-Proto.
+
+2. Stress-test episode builders
+   A) Overlap stress  
+      – Build “hard” episodes where all 5 classes share one WordNet super-class (100 super-classes pre-computed).^1  
+      – “Easy” baseline = uniform random classes.  
+      – 600 hard + 600 easy episodes per dataset.
+   B) Norm-variance stress  
+      – For each query image, multiply input pixels by s ∼ Uniform(0.6,1.4) → induces ∥e∥ variance without label change.
+
+3. Metrics
+   • Accuracy drop (easy→hard, unscaled→scaled)  
+   • Histogram of pairwise prototype cosine similarities; % above τ.  
+   • Var(∥e∥₂) across support; plot density.
+
+4. Robustness methodology
+   – Two-sided paired t-test between models for each stress condition.  
+   – Effect size (Cohen’s d) reported.
+
+5. Code fragment (overlap stress)
+   ```python
+   def build_overlap_episode(dataset, super_cls):
+       cls_pool = SUPER2CLASSES[super_cls]
+       cls = random.sample(cls_pool, 5)
+       return sample_episode(dataset, cls, n_shot, n_query)
+   ```
+
+6. Computational overhead: re-use Exp-1 FLOPs/time numbers (inference only).
+
+──────────────────────────────────────────────── Experiment 3 – Cross-Domain & Backbone Generalisation ─────────────────────────────
+Goal: Demonstrate that PMR-Proto’s gains transfer to unseen domains and different feature extractors.
+
+A) Cross-Domain Transfer
+1. Training source:  miniImageNet (weights of Exp-1).  
+2. Target test sets (no fine-tuning):
+   • CUB-200-2011 Few-Shot split (100/50/50) 84×84^2  
+   • CIFAR-FS (64/16/20) 32×32 up-sampled to 84.^3  
+   • Tasks: 5-way 1-shot & 5-shot, 600 episodes each.
+3. Metrics
+   • Mean accuracy ± CI,  
+   • Expected Calibration Error (ECE, 15 bins),  
+   • F1-macro (class-balanced),  
+   • Negative Log-Likelihood (NLL).
+
+B) Backbone Ablation
+1. Replace ResNet-12 with ConvNeXt-Tiny (Tiny-Patch-16, 28 M parameters).  
+   – Keep head identical.  
+   – Train on miniImageNet from scratch with identical meta-learning schedule.  
+2. Report same metrics as Exp-1.
+
+C) Robustness extension
+   – Domain shift score (DSS): ratio of target-domain accuracy / source-domain accuracy.  
+   – OOD detection AUROC using maximum softmax probability (MSP) when mixing ImageNet-22K classes not in training set.
+
+──────────────────────────────────────────────── Shared Experimental Details ────────────────────────────────
+1. Number of seeds & averaging:  Five seeds for every train + test combination.  Report aggregate mean ± 95 % CI.  Significance tested via Welch’s t-test (α = 0.05, Bonferroni corrected across 8 comparisons).
+
+2. Hyper-parameter sensitivity analysis
+   • One-factor-at-a-time sweep around best (τ ± 0.05, λ × {0.5,1,2}, γ × {0.5,1,2}).  
+   • Plot heatmaps of validation accuracy; record flatness (variance) to demonstrate stability.
+
+3. Robustness beyond Experiment 2
+   • Grad-sign FGSM attack in feature space: ε ∈ {0.5,1.0}.  
+   • Random Gaussian noise to embeddings σ ∈ {0.1,0.2}.  
+   • Evaluate accuracy degradation; compare.
+
+4. Compute cost summary (numbers measured and to be filled post-run)
+   • FLOPs/episode: ResNet-12 ≈ 0.55 GFLOPs; PMR-Proto adds <0.1 %.  
+   • Training throughput: 2.4k images/s (ProtoNet) vs 2.38k (PMR-Proto).  
+   • Peak memory: 42.8 GB vs 43.0 GB.  
+   • Total wall-clock (90 epochs): ≈ 7.5 h on single A100-80GB.
+
+──────────────────────────────────────────────── Footnotes ────────────────────────────────
+1. WordNet super-classes follow the scheme of Chen et al. “A closer look at few-shot classification.”  If a super-class has <5 real classes in the split, it is skipped.
+2. CUB images are cropped via bounding-box + 10 pixel context, then resized to 84×84 to match backbone.
+3. CIFAR-FS resized with bicubic interpolation; we additionally add AutoAugment_CIFAR during training for ConvNeXt to avoid overfitting small images.
+
+──────────────────────────────────────────────────────────────────────────────────────────
+
+
+# Generated Base Code Files
+{"evaluate_py": "\"\"\"src/evaluate.py\nUniversal evaluation framework shared by every experiment variant. Computes\naccuracy, confidence intervals, confusion matrix, calibration metrics and\nhandles figure generation, fully independent of dataset/model choice.\n\"\"\"\nfrom __future__ import annotations\n\nimport math\nimport random\nfrom pathlib import Path\nfrom typing import Dict, List, Tuple\n\nimport matplotlib.pyplot as plt\nimport numpy as np\nimport seaborn as sns\nimport torch\nimport torch.nn.functional as F\nfrom sklearn.calibration import calibration_curve\nfrom sklearn.metrics import confusion_matrix\nfrom tqdm import tqdm\n\n# --------------------------------------------------------------------------------------\n#               Helper: annotate plots for publication-ready figures\n# --------------------------------------------------------------------------------------\n\ndef _annotate_line(ax, xs: List[float], ys: List[float]):\n    for x, y in zip(xs, ys):\n        ax.annotate(f\"{y:.2f}\", (x, y), textcoords=\"offset points\", xytext=(0, 5), ha=\"center\")\n\n\ndef _annotate_bars(ax):\n    for p in ax.patches:\n        ax.annotate(\n            f\"{p.get_height():.2f}\",\n            (p.get_x() + p.get_width() / 2.0, p.get_height()),\n            ha=\"center\",\n            va=\"center\",\n            xytext=(0, 8),\n            textcoords=\"offset points\",\n        )\n\n\n# --------------------------------------------------------------------------------------\n#                   Evaluator  (stateless; static helpers)\n# --------------------------------------------------------------------------------------\n\n\nclass Evaluator:\n    @staticmethod\n    def _episode_forward(\n        model: torch.nn.Module,\n        imgs: torch.Tensor,\n        labels: torch.Tensor,\n        n_way: int,\n        n_shot: int,\n        n_query: int,\n        temperature: float = 10.0,\n    ) -\u003e Tuple[torch.Tensor, torch.Tensor]:\n        \"\"\"Run one episode and return (predicted labels, GT labels for query).\"\"\"\n        with torch.no_grad():\n            embeddings = model(imgs)\n            n_support = n_way * n_shot\n            emb_sup, emb_q = embeddings[:n_support], embeddings[n_support:]\n            lbl_sup, lbl_q = labels[:n_support], labels[n_support:]\n            # prototypes\n            protos = []\n            for c in range(n_way):\n                idx = torch.nonzero(lbl_sup == c, as_tuple=False).squeeze(-1)\n                protos.append(emb_sup[idx].mean(0))\n            protos = F.normalize(torch.stack(protos), dim=1)\n            logits = torch.matmul(F.normalize(emb_q, dim=1), protos.t()) * temperature\n            preds = logits.argmax(1)\n        return preds.cpu(), lbl_q.cpu()\n\n    # ------------------------------------------------------------------\n    #                  main evaluation over many episodes\n    # ------------------------------------------------------------------\n    @staticmethod\n    def evaluate(\n        model: torch.nn.Module,\n        loader: torch.utils.data.DataLoader,\n        cfg: Dict,\n        device: torch.device,\n        split: str = \"val\",\n    ) -\u003e Dict:\n        model.eval()\n        n_way = cfg[\"episodes\"][\"n_way\"]\n        n_shot = cfg[\"episodes\"][\"n_shot\"]\n        n_query = cfg[\"episodes\"][\"n_query\"]\n        temperature = cfg[\"train\"].get(\"temperature\", 10.0)\n\n        all_preds: List[int] = []\n        all_gts: List[int] = []\n        episode_accs: List[float] = []\n\n        for imgs, labels in tqdm(loader, desc=f\"Evaluating ({split})\"):\n            imgs = imgs.to(device)\n            labels = labels.to(device)\n            preds, gt = Evaluator._episode_forward(\n                model, imgs, labels, n_way, n_shot, n_query, temperature\n            )\n            all_preds.extend(preds.numpy().tolist())\n            all_gts.extend(gt.numpy().tolist())\n            episode_accs.append((preds == gt).float().mean().item() * 100)\n\n        all_preds_arr = np.array(all_preds)\n        all_gts_arr = np.array(all_gts)\n        mean_acc = float(np.mean(episode_accs))\n        std = float(np.std(episode_accs, ddof=1))\n        ci95 = 1.96 * std / math.sqrt(len(episode_accs))\n\n        # confusion matrix \u0026 calibration (optional heavy ops)\n        conf_mat = confusion_matrix(all_gts_arr, all_preds_arr, labels=list(range(n_way)))\n        cm_fig_path = None\n        if cfg[\"eval\"].get(\"compute_confusion\", True):\n            cm_fig_path = Evaluator._plot_confusion_matrix(conf_mat, cfg, split)\n\n        ece_val = None\n        if cfg[\"eval\"].get(\"compute_ece\", True):\n            # approximate confidences via softmax on logits (re-compute quickly)\n            ece_val = Evaluator._expected_calibration_error(all_preds_arr, all_gts_arr)\n\n        metrics = {\n            \"mean_accuracy\": mean_acc,\n            \"ci95\": ci95,\n            \"std\": std,\n            \"num_episodes\": len(episode_accs),\n        }\n        if ece_val is not None:\n            metrics[\"ECE\"] = ece_val\n        if cm_fig_path is not None:\n            metrics[\"confusion_matrix_fig\"] = cm_fig_path\n        return metrics\n\n    # ------------------------------------------------------------------\n    #               helper: expected calibration error (ECE)\n    # ------------------------------------------------------------------\n    @staticmethod\n    def _expected_calibration_error(preds: np.ndarray, gts: np.ndarray, n_bins: int = 15):\n        acc = (preds == gts).astype(float)\n        prob_true, prob_pred = calibration_curve(acc, acc, n_bins=n_bins)\n        return float(np.abs(prob_true - prob_pred).mean())\n\n    # ------------------------------------------------------------------\n    #            helper: plot confusion matrix  (saved as PDF)\n    # ------------------------------------------------------------------\n    @staticmethod\n    def _plot_confusion_matrix(conf_mat: np.ndarray, cfg: Dict, split: str):\n        fig, ax = plt.subplots(figsize=(6, 5))\n        sns.heatmap(conf_mat, annot=True, fmt=\"d\", ax=ax, cmap=\"Blues\")\n        ax.set_xlabel(\"Predicted\")\n        ax.set_ylabel(\"True\")\n        ax.set_title(f\"Confusion Matrix ({split})\")\n        fig.tight_layout()\n        fname = f\"confusion_matrix_{split}.pdf\"\n        out_path = Path(cfg[\"experiment\"][\"output_root\"]) / fname\n        fig.savefig(out_path, bbox_inches=\"tight\")\n        plt.close(fig)\n        return str(out_path)\n\n    # ------------------------------------------------------------------\n    #          helper: plot training loss \u0026 val accuracy curves\n    # ------------------------------------------------------------------\n    @staticmethod\n    def plot_training_curves(\n        loss_curve: List[float],\n        acc_curve: List[float],\n        fig_dir: Path,\n    ) -\u003e List[Path]:\n        xs = list(range(1, len(loss_curve) + 1))\n        # Training loss\n        fig1, ax1 = plt.subplots()\n        ax1.plot(xs, loss_curve, label=\"Training Loss\")\n        _annotate_line(ax1, xs, loss_curve)\n        ax1.set_xlabel(\"Epoch\")\n        ax1.set_ylabel(\"Loss\")\n        ax1.set_title(\"Training Loss Curve\")\n        ax1.legend()\n        fig1.tight_layout()\n        loss_path = fig_dir / \"training_loss.pdf\"\n        fig1.savefig(loss_path, bbox_inches=\"tight\")\n        plt.close(fig1)\n\n        # Validation accuracy\n        fig2, ax2 = plt.subplots()\n        ax2.plot(xs, acc_curve, marker=\"o\", label=\"Validation Accuracy (%)\")\n        _annotate_line(ax2, xs, acc_curve)\n        ax2.set_xlabel(\"Epoch\")\n        ax2.set_ylabel(\"Accuracy (%)\")\n        ax2.set_title(\"Validation Accuracy Curve\")\n        ax2.legend()\n        fig2.tight_layout()\n        acc_path = fig_dir / \"accuracy.pdf\"\n        fig2.savefig(acc_path, bbox_inches=\"tight\")\n        plt.close(fig2)\n\n        return [loss_path, acc_path]\n", "full_experiment_yaml": "experiment:\n  name: full_experiment_PLACEHOLDER\n  description: |\n    Full experiment placeholder configuration. Replace dataset/model fields with\n    actual values (e.g., miniImageNet + ResNet-12) before execution.\n  output_root: results_full\n\nseed: 42\n\ndataset:\n  name: DATASET_PLACEHOLDER  # PLACEHOLDER: Will be replaced with specific dataset name\n  image_size: 84             # Update if necessary\n  NUM_OTHER_SPECIFIC_ARGS: 0 # PLACEHOLDER examples ...\n\nepisodes:\n  n_way: 5\n  n_shot: 1\n  n_query: 15\n  train_episodes: 1000\n  val_episodes: 600\n  test_episodes: 600\n\nmodel:\n  name: MODEL_PLACEHOLDER    # PLACEHOLDER: Will be set to backbone like ResNet12\n\ntrain:\n  epochs: 90\n  lr: 0.05\n  momentum: 0.9\n  weight_decay: 0.0005\n  temperature: 10.0\n  tau: 0.2\n  lambda: 0.1\n  gamma: 0.01\n\n  # Scheduler, optimiser, batch sizes, etc., can be appended here.\n\neval:\n  compute_confusion: true\n  compute_ece: true\n", "main_py": "\"\"\"src/main.py\nMain CLI entry-point. Supports --smoke-test and --full-experiment switches and\nhandles printing experiment description \u0026 JSON results to STDOUT.\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport json\nimport os\nimport sys\nfrom pathlib import Path\n\nimport yaml\n\nfrom src.train import Trainer\n\n\n# --------------------------------------------------------------------------------------\n#                            utility helpers\n# --------------------------------------------------------------------------------------\n\ndef set_seed(seed: int):\n    import random\n\n    import numpy as np\n    import torch\n\n    random.seed(seed)\n    np.random.seed(seed)\n    torch.manual_seed(seed)\n    if torch.cuda.is_available():\n        torch.cuda.manual_seed_all(seed)\n\n\n# --------------------------------------------------------------------------------------\n#                             CLI \u0026 dispatch\n# --------------------------------------------------------------------------------------\n\ndef _load_config(path: str | Path):\n    with open(path, \"r\") as f:\n        cfg = yaml.safe_load(f)\n    return cfg\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=\"PMR-Proto common experiment runner\")\n    group = parser.add_mutually_exclusive_group(required=True)\n    group.add_argument(\"--smoke-test\", action=\"store_true\", help=\"run quick smoke test\")\n    group.add_argument(\"--full-experiment\", action=\"store_true\", help=\"run full experiment\")\n    parser.add_argument(\"--config\", type=str, default=None, help=\"path to YAML config to override\")\n    args = parser.parse_args()\n\n    if args.smoke_test:\n        cfg_path = args.config or \"config/smoke_test.yaml\"\n    else:\n        cfg_path = args.config or \"config/full_experiment.yaml\"\n\n    cfg = _load_config(cfg_path)\n\n    # Ensure determinism for comparability\n    set_seed(cfg.get(\"seed\", 42))\n\n    # --------------------------------- run training ---------------------------------\n    trainer = Trainer(cfg)\n    results = trainer.train()\n\n    # ----------------------------- STDOUT requirements ------------------------------\n    print(\"\\n=====================  EXPERIMENT DESCRIPTION  =====================\")\n    print(cfg[\"experiment\"][\"description\"])\n    print(\"=====================  RESULTS  =====================\")\n    print(json.dumps(results, indent=2))\n    print(\"=====================  FIGURES  =====================\")\n    for fig in results[\"figure_paths\"]:\n        print(Path(fig).name)\n\n\nif __name__ == \"__main__\":\n    main()\n", "preprocess_py": "\"\"\"src/preprocess.py\nCommon data preprocessing pipeline with dataset placeholders. Implements a fully\nfunctional synthetic few-shot dataset for smoke testing while leaving clear\nhooks for real datasets to be inserted later.\n\"\"\"\nfrom __future__ import annotations\n\nimport random\nfrom typing import Dict, List, Tuple\n\nimport numpy as np\nimport torch\nfrom torch.utils.data import DataLoader, Dataset\nfrom torchvision import transforms\n\n# --------------------------------------------------------------------------------------\n#                    Synthetic dataset (for smoke testing)\n# --------------------------------------------------------------------------------------\n\n\nclass SyntheticFewShotDataset(Dataset):\n    \"\"\"Creates random images belonging to `num_classes` classes.\n\n    Each image is 84\u00d784 RGB with values in [0,1]. The data is generated once and\n    kept in memory \u2013 sufficient for smoke testing.\n    \"\"\"\n\n    def __init__(\n        self,\n        num_classes: int,\n        samples_per_class: int,\n        image_size: int,\n        transform=None,\n    ):\n        super().__init__()\n        self.transform = transform\n        self.image_size = image_size\n        self.data: List[Tuple[np.ndarray, int]] = []\n        for cls in range(num_classes):\n            for _ in range(samples_per_class):\n                img = np.random.rand(3, image_size, image_size).astype(np.float32)\n                self.data.append((img, cls))\n\n    def __len__(self):\n        return len(self.data)\n\n    def __getitem__(self, idx: int):\n        img, label = self.data[idx]\n        img_tensor = torch.from_numpy(img)\n        if self.transform is not None:\n            img_tensor = self.transform(img_tensor)\n        return img_tensor, label\n\n\n# --------------------------------------------------------------------------------------\n#            Episodic dataset wrapper (constructs N-way K-shot episodes)\n# --------------------------------------------------------------------------------------\n\n\nclass EpisodicDataset(Dataset):\n    \"\"\"Wraps a base dataset to sample few-shot episodes on-the-fly.\"\"\"\n\n    def __init__(\n        self,\n        base_dataset: Dataset,\n        n_way: int,\n        n_shot: int,\n        n_query: int,\n        episodes_per_epoch: int,\n    ):\n        super().__init__()\n        self.base_dataset = base_dataset\n        self.n_way = n_way\n        self.n_shot = n_shot\n        self.n_query = n_query\n        self.episodes_per_epoch = episodes_per_epoch\n\n        # Build index look-up: cls -\u003e indices\n        self.cls_to_indices: Dict[int, List[int]] = {}\n        for idx in range(len(base_dataset)):\n            _, lbl = base_dataset[idx]\n            self.cls_to_indices.setdefault(lbl, []).append(idx)\n        self.classes = list(self.cls_to_indices.keys())\n\n    def __len__(self):\n        return self.episodes_per_epoch\n\n    def __getitem__(self, episode_idx: int):\n        # Sample classes\n        classes = random.sample(self.classes, self.n_way)\n        imgs: List[torch.Tensor] = []\n        labels: List[int] = []\n        for lbl, cls in enumerate(classes):\n            idx_pool = random.sample(self.cls_to_indices[cls], self.n_shot + self.n_query)\n            for i, data_idx in enumerate(idx_pool):\n                img, _ = self.base_dataset[data_idx]\n                imgs.append(img.unsqueeze(0))  # keep batch dim\n                labels.append(lbl)  # relabel to 0..n_way-1 within episode\n        imgs_tensor = torch.cat(imgs, dim=0)  # (N,3,H,W)\n        labels_tensor = torch.tensor(labels, dtype=torch.long)\n        return imgs_tensor, labels_tensor\n\n\n# --------------------------------------------------------------------------------------\n#            Helper functions to build transforms and dataloaders\n# --------------------------------------------------------------------------------------\n\ndef _get_default_transform(image_size: int, phase: str):\n    aug = []\n    if phase == \"train\":\n        aug.extend(\n            [\n                transforms.RandomHorizontalFlip(),\n            ]\n        )\n    aug.append(transforms.Resize((image_size, image_size)))\n    aug.append(transforms.Normalize(0.5, 0.5))  # simple normalisation\n    return transforms.Compose(aug)\n\n\n# --------------------- dataset loader with placeholders -----------------------------\n\ndef _load_base_dataset(name: str, split: str, cfg: Dict):\n    if name == \"SyntheticFewShot\":\n        ds_cfg = cfg[\"dataset\"]\n        transform = _get_default_transform(ds_cfg[\"image_size\"], split)\n        return SyntheticFewShotDataset(\n            num_classes=ds_cfg[\"num_classes\"],\n            samples_per_class=ds_cfg[\"num_samples_per_class\"],\n            image_size=ds_cfg[\"image_size\"],\n            transform=transform,\n        )\n    # PLACEHOLDER: Will be replaced with specific dataset loading logic (e.g., miniImageNet)\n    raise NotImplementedError(f\"Dataset \u0027{name}\u0027 not implemented yet.\")\n\n\n# --------------------- public interface used by Trainer -----------------------------\n\ndef build_dataloaders(cfg: Dict):\n    epi_cfg = cfg[\"episodes\"]\n\n    base_train = _load_base_dataset(cfg[\"dataset\"][\"name\"], \"train\", cfg)\n    base_val = _load_base_dataset(cfg[\"dataset\"][\"name\"], \"val\", cfg)\n    base_test = _load_base_dataset(cfg[\"dataset\"][\"name\"], \"test\", cfg)\n\n    def make_loader(base_ds, episodes):\n        epi_ds = EpisodicDataset(\n            base_ds,\n            n_way=epi_cfg[\"n_way\"],\n            n_shot=epi_cfg[\"n_shot\"],\n            n_query=epi_cfg[\"n_query\"],\n            episodes_per_epoch=episodes,\n        )\n        return DataLoader(epi_ds, batch_size=1, shuffle=False)\n\n    train_loader = make_loader(base_train, epi_cfg[\"train_episodes\"])\n    val_loader = make_loader(base_val, epi_cfg[\"val_episodes\"])\n    test_loader = make_loader(base_test, epi_cfg[\"test_episodes\"])\n    return train_loader, val_loader, test_loader\n", "pyproject_toml": "[build-system]\nrequires = [\"setuptools\u003e=61.0\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"pmr_proto_framework\"\nversion = \"0.1.0\"\ndependencies = [\n    \"torch\u003e=2.0.0\",\n    \"torchvision\u003e=0.15.0\",\n    \"PyYAML\u003e=6.0\",\n    \"numpy\u003e=1.23.0\",\n    \"matplotlib\u003e=3.7.0\",\n    \"seaborn\u003e=0.12.0\",\n    \"scikit-learn\u003e=1.2.0\",\n    \"tqdm\u003e=4.64.0\",\n]\n", "smoke_test_yaml": "experiment:\n  name: smoke_test\n  description: |\n    Smoke-test run using a synthetic few-shot dataset and a lightweight\n    SimpleCNN backbone to validate the full experimental pipeline.\n  output_root: results_smoke\n\nseed: 123\n\ndataset:\n  name: SyntheticFewShot\n  image_size: 84\n  num_classes: 10\n  num_samples_per_class: 20\n\nepisodes:\n  n_way: 5\n  n_shot: 1\n  n_query: 5\n  train_episodes: 20\n  val_episodes: 10\n  test_episodes: 10\n\nmodel:\n  name: SimpleCNN\n\ntrain:\n  epochs: 1\n  lr: 0.01\n  momentum: 0.9\n  weight_decay: 0.0005\n  temperature: 10.0\n  tau: 0.2\n  lambda: 0.1\n  gamma: 0.01\n\neval:\n  compute_confusion: true\n  compute_ece: true\n", "train_py": "\"\"\"src/train.py\nCore training logic implementing PMR-ProtoNet with complete, production-ready\ninfrastructure. The only elements left as placeholders are the dataset/model\n*selection* bits \u2013 everything else is fully functional.\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport os\nimport time\nfrom pathlib import Path\nfrom typing import Dict, List, Tuple\n\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nfrom torch.utils.data import DataLoader\nfrom tqdm import tqdm\n\nfrom src.evaluate import Evaluator\nfrom src.preprocess import build_dataloaders\n\n# --------------------------------------------------------------------------------------\n#                       BACKBONE  (can be swapped via config)\n# --------------------------------------------------------------------------------------\n\n\nclass ConvBlock(nn.Module):\n    \"\"\"A single conv-bn-relu-pool block.\"\"\"\n\n    def __init__(self, in_ch: int, out_ch: int):\n        super().__init__()\n        self.net = nn.Sequential(\n            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),\n            nn.BatchNorm2d(out_ch),\n            nn.ReLU(inplace=True),\n            nn.MaxPool2d(2),\n        )\n\n    def forward(self, x: torch.Tensor) -\u003e torch.Tensor:  # (B,C,H,W)\n        return self.net(x)\n\n\nclass SimpleCNNBackbone(nn.Module):\n    \"\"\"A 4-block CNN that outputs a 64-D embedding (ProtoNet default).\"\"\"\n\n    def __init__(self, in_ch: int = 3, hid: int = 64):\n        super().__init__()\n        self.encoder = nn.Sequential(\n            ConvBlock(in_ch, hid),\n            ConvBlock(hid, hid),\n            ConvBlock(hid, hid),\n            ConvBlock(hid, hid),\n        )\n        self.out_dim = hid\n\n    def forward(self, x: torch.Tensor) -\u003e torch.Tensor:  # (B,C,H,W)\n        features = self.encoder(x)  # (B, hid, H/16, W/16)\n        return features.view(features.size(0), -1)  # flatten\n\n\n# --------------------------------------------------------------------------------------\n#                        LOSS  (PMR-Proto)   \u2014 FULL IMPLEMENTATION\n# --------------------------------------------------------------------------------------\n\ndef pmr_proto_episode_loss(\n    embeddings: torch.Tensor,\n    labels: torch.Tensor,\n    n_way: int,\n    n_shot: int,\n    n_query: int,\n    tau: float,\n    lam: float,\n    gam: float,\n    temperature: float = 10.0,\n) -\u003e Tuple[torch.Tensor, Dict[str, float]]:\n    \"\"\"Compute full PMR-Proto loss for ONE episode.\n\n    Args\n    ----\n    embeddings : (N, D)  tensor  Support+Query order is fixed (all support first).\n    labels     : (N,)    tensor  integer labels 0..n_way-1  (already re-mapped).\n    n_way      : number of classes in episode.\n    n_shot     : support shots per class.\n    n_query    : query samples per class.\n    tau, lam, gam : PMR hyper-parameters.\n    temperature : cosine classifier temperature.\n    Returns\n    -------\n    loss : scalar tensor\n    stats: dict with sub-losses (for logging)\n    \"\"\"\n    device = embeddings.device\n    D = embeddings.size(1)\n    # Partition support/query\n    n_support = n_way * n_shot\n    emb_sup, emb_q = embeddings[:n_support], embeddings[n_support:]\n    lbl_sup, lbl_q = labels[:n_support], labels[n_support:]\n\n    # === Standard ProtoNet NLL loss (cosine) ===\n    # Form prototypes class-wise\n    protos = []\n    for c in range(n_way):\n        idx = torch.nonzero(lbl_sup == c, as_tuple=False).squeeze(-1)\n        assert (\n            len(idx) == n_shot\n        ), f\"Class {c} has {len(idx)} support samples, expected {n_shot}\"\n        protos.append(emb_sup[idx].mean(0))\n    protos = torch.stack(protos, dim=0)  # (n_way, D)\n\n    protos = F.normalize(protos, dim=1)\n    emb_q_norm = F.normalize(emb_q, dim=1)\n    logits = torch.matmul(emb_q_norm, protos.t()) * temperature  # (Nq, n_way)\n    L_proto = F.cross_entropy(logits, lbl_q)\n\n    # === Prototype-margin loss ===\n    cos_mat = torch.matmul(protos, protos.t())  # (W,W)\n    tri_mask = torch.triu(torch.ones_like(cos_mat, dtype=torch.bool), 1)\n    if tri_mask.sum() == 0:\n        L_margin = torch.tensor(0.0, device=device)\n    else:\n        cos_pairs = cos_mat[tri_mask]\n        L_margin = F.relu(cos_pairs - tau).mean()\n\n    # === Feature-norm variance loss ===\n    l2_norms = emb_sup.norm(p=2, dim=1)\n    L_norm = l2_norms.var(unbiased=False)\n\n    loss = L_proto + lam * L_margin + gam * L_norm\n    stats = {\n        \"total\": loss.item(),\n        \"L_proto\": L_proto.item(),\n        \"L_margin\": L_margin.item(),\n        \"L_norm\": L_norm.item(),\n    }\n    return loss, stats\n\n\n# --------------------------------------------------------------------------------------\n#                        TRAINER  \u2013 handles full experiment loop\n# --------------------------------------------------------------------------------------\n\n\nclass Trainer:\n    def __init__(self, cfg: Dict):\n        self.cfg = cfg\n        self.device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n\n        # Build loaders (placeholders for dataset-specific selection inside)\n        self.train_loader, self.val_loader, self.test_loader = build_dataloaders(cfg)\n\n        # Build backbone (placeholder selection logic; default: SimpleCNN)\n        self.model: nn.Module = self._build_model()\n        self.model.to(self.device)\n\n        # --- Optimiser \u0026 schedule ---\n        opt_cfg = cfg[\"train\"]\n        self.optimizer = torch.optim.SGD(\n            self.model.parameters(),\n            lr=opt_cfg[\"lr\"],\n            momentum=opt_cfg.get(\"momentum\", 0.9),\n            weight_decay=opt_cfg.get(\"weight_decay\", 5e-4),\n            nesterov=True,\n        )\n        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(\n            self.optimizer, T_max=opt_cfg[\"epochs\"]\n        )\n\n        # Containers for curves\n        self.train_loss_curve: List[float] = []\n        self.val_acc_curve: List[float] = []\n\n        # Make results dir\n        res_root = Path(cfg[\"experiment\"][\"output_root\"])\n        res_root.mkdir(parents=True, exist_ok=True)\n        ts = time.strftime(\"%Y%m%d-%H%M%S\")\n        self.run_dir = res_root / f\"run_{cfg[\u0027experiment\u0027][\u0027name\u0027]}_{ts}\"\n        self.run_dir.mkdir(exist_ok=False)\n        (self.run_dir / \"figures\").mkdir()\n\n    # ------------------------------------------------------------------\n    #                      model builder  (placeholder aware)\n    # ------------------------------------------------------------------\n    def _build_model(self) -\u003e nn.Module:\n        arch = self.cfg[\"model\"][\"name\"]\n        if arch == \"SimpleCNN\":\n            return SimpleCNNBackbone()\n        # PLACEHOLDER: Will be replaced with actual model construction logic\n        raise ValueError(f\"Unknown backbone \u0027{arch}\u0027. Extend _build_model().\")\n\n    # ------------------------------------------------------------------\n    #                         training procedure\n    # ------------------------------------------------------------------\n    def train(self) -\u003e Dict:\n        epochs = self.cfg[\"train\"][\"epochs\"]\n        n_way = self.cfg[\"episodes\"][\"n_way\"]\n        n_shot = self.cfg[\"episodes\"][\"n_shot\"]\n        n_query = self.cfg[\"episodes\"][\"n_query\"]\n        tau = self.cfg[\"train\"][\"tau\"]\n        lam = self.cfg[\"train\"][\"lambda\"]\n        gam = self.cfg[\"train\"][\"gamma\"]\n        temperature = self.cfg[\"train\"].get(\"temperature\", 10.0)\n\n        best_val_acc = 0.0\n        best_weights_path = self.run_dir / \"best_model.pt\"\n\n        global_step = 0\n        for epoch in range(1, epochs + 1):\n            self.model.train()\n            loss_accum: List[float] = []\n            with tqdm(self.train_loader, desc=f\"Epoch {epoch}/{epochs}\") as pbar:\n                for imgs, labels in pbar:\n                    imgs = imgs.to(self.device)\n                    labels = labels.to(self.device)\n                    embeddings = self.model(imgs)\n                    loss, _ = pmr_proto_episode_loss(\n                        embeddings,\n                        labels,\n                        n_way=n_way,\n                        n_shot=n_shot,\n                        n_query=n_query,\n                        tau=tau,\n                        lam=lam,\n                        gam=gam,\n                        temperature=temperature,\n                    )\n                    self.optimizer.zero_grad()\n                    loss.backward()\n                    self.optimizer.step()\n\n                    loss_accum.append(loss.item())\n                    pbar.set_postfix({\"loss\": f\"{loss.item():.4f}\"})\n                    global_step += 1\n            self.scheduler.step()\n\n            # ----- validation every epoch -----\n            val_metrics = Evaluator.evaluate(\n                self.model, self.val_loader, self.cfg, self.device, split=\"val\"\n            )\n            val_acc = val_metrics[\"mean_accuracy\"]\n            self.train_loss_curve.append(float(np.mean(loss_accum)))\n            self.val_acc_curve.append(val_acc)\n\n            # Save best\n            if val_acc \u003e best_val_acc:\n                best_val_acc = val_acc\n                torch.save(self.model.state_dict(), best_weights_path)\n\n        # -------- load best weights before test evaluation --------\n        self.model.load_state_dict(torch.load(best_weights_path))\n\n        test_metrics = Evaluator.evaluate(\n            self.model, self.test_loader, self.cfg, self.device, split=\"test\"\n        )\n\n        # -------- figure generation --------\n        fig_paths = Evaluator.plot_training_curves(\n            self.train_loss_curve,\n            self.val_acc_curve,\n            self.run_dir / \"figures\",\n        )\n\n        # Record results to JSON\n        result_dict = {\n            \"experiment_name\": self.cfg[\"experiment\"][\"name\"],\n            \"description\": self.cfg[\"experiment\"][\"description\"],\n            \"best_val_accuracy\": best_val_acc,\n            \"test_metrics\": test_metrics,\n            \"training_loss_curve\": self.train_loss_curve,\n            \"val_acc_curve\": self.val_acc_curve,\n            \"figure_paths\": [str(p) for p in fig_paths],\n        }\n        json_path = self.run_dir / \"results.json\"\n        with open(json_path, \"w\") as f:\n            json.dump(result_dict, f, indent=2)\n\n        return result_dict\n"}
+
+Analyze the Base code thoroughly, focusing on whether it provides a solid, consistent foundation for ALL future experimental variations while properly using placeholders for dataset/model-specific components.
+Output:
+{
+    "is_base_code_ready": false,
+    "base_code_issue": "Fails criterion 1 & 5: evaluation metric implementation is incorrect – _expected_calibration_error is computed from boolean accuracies rather than class-probabilities, so ECE is meaningless; therefore evaluation framework is not “proper”.  All other criteria are met, but the faulty metric means the base foundation is not yet solid."
+}
