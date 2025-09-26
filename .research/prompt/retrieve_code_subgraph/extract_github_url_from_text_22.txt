@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+TSE is inspired by theoretical connections between training speed and generalization, including stability-based generalization bounds for SGD, neural-tangent-kernel-inspired complexity measures, information-theoretic generalization bounds depending on gradient variance, and PAC-Bayes bounds under a Bayesian setting. The core estimator, TSE, is defined as the sum of mini-batch training losses over a specified number of epochs (area under the training curve). Two variants are introduced: TSE-E, which sums losses only from the E most recent epochs, and TSE-EMA, which uses an exponential moving average of training losses, assigning higher weight to later epochs (with a default decay rate of 0.999). The method focuses on training loss over validation loss, as validation loss can become unreliable due to overconfidence under misclassification in later training phases.
+
+# GitHub URLs List
+['https://github.com/D-X-Y/NAS-Bench-201', 'https://github.com/automl/nasbench301', 'https://github.com/facebookresearch/nds']
+Output:
+{
+    "index": null
+}
