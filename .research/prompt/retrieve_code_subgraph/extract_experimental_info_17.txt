@@ -1,0 +1,2577 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+PaPi employs a shared feature encoder (f(·)) and a projector network (g(·)) to map augmented input images into low-dimensional representations. A linear classifier (h(·)) operates on these representations. Key components include: 1) **Prototypical Alignment Loss**: A prototypical similarity distribution (sl_i) is generated for each sample based on softmax over distances to class-specific prototypes in the projected space. This is aligned with a disambiguated probability (p_i), which is iteratively updated from the linear classifier's prediction using a soft, moving-average mechanism. The alignment is achieved by minimizing the Kullback-Leibler (KL) divergence between these distributions. 2) **Self-Teaching Mechanism**: The linear classifier performs self-teaching, where each learning stage is guided by current and previous stages. 3) **Mixup Augmentation**: New training samples are created by linearly interpolating existing samples, and a weighted augmented alignment loss is applied. 4) **Prototype Evolving**: Class prototypes are updated using a moving-average of normalized representations of samples assigned to that class. The overall objective minimizes a weighted sum of the classification loss (cross-entropy with p_i as target) and the prototypical alignment loss, with a dynamic balancing function.
+
+# Repository Content
+File Path: main.py
+Content:
+import os
+import math
+import time
+import random
+import shutil
+import logging
+import warnings
+import argparse
+import builtins
+import numpy as np
+import tensorboard_logger as tb_logger
+
+import torch
+import torch.nn 
+import torch.optim
+import torch.utils.data
+import torch.utils.data.distributed
+import torch.nn.parallel
+import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import torch.multiprocessing as mp
+
+from utils.model import PaPi
+from utils.resnet import *
+from utils.utils_algo import *
+from utils.utils_loss import PaPiLoss
+
+from utils.fmnist import load_fmnist
+from utils.svhn import load_svhn
+from utils.cifar10 import load_cifar10
+from utils.cifar100 import load_cifar100
+from utils.miniImagenet import load_miniImagenet
+
+
+
+parser = argparse.ArgumentParser(description='PyTorch implementation of PaPi (Towards Effective Visual Representations for Partial-Label Learning)')
+
+parser.add_argument('--exp-type', default='rand', type=str, choices=['rand', 'ins'], help='Different exp-types')
+
+parser.add_argument('--dataset', default='cifar10', type=str, 
+                    choices=['fmnist', 'SVHN', 'cifar10', 'cifar100', 'miniImagenet'],
+                    help='dataset name')
+
+parser.add_argument('--exp-dir', default='./experiment', type=str,
+                    help='experiment directory for saving checkpoints and logs')
+
+parser.add_argument('--pmodel_path', default='./pmodel/cifar10.pt', type=str,
+                    help='pretrained model path for generating instance dependent partial labels')
+
+parser.add_argument('--data-dir', default='./data', type=str)
+
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18', choices=['resnet18'],
+                    help='network architecture (only resnet18 used)')
+
+parser.add_argument('-j', '--workers', default=0, type=int,
+                    help='number of data loading workers (default: 0)')
+
+parser.add_argument('--epochs', default=500, type=int, 
+                    help='number of total epochs to run')
+
+parser.add_argument('--start-epoch', default=0, type=int, 
+                    help='manual epoch number (useful on restarts)')
+
+parser.add_argument('-b', '--batch-size', default=256, type=int,
+                    help='mini-batch size (default: 256), this is the total '
+                         'batch size of all GPUs on the current node when '
+                         'using Data Parallel or Distributed Data Parallel')
+
+parser.add_argument('--lr', '--learning-rate', default=0.05, type=float,
+                    metavar='LR', help='initial learning rate', dest='lr')
+
+parser.add_argument('-lr_decay_epochs', type=str, default='99,199,299',
+                    help='where to decay lr, can be a list')
+
+parser.add_argument('-lr_decay_rate', type=float, default=0.1,
+                    help='decay rate for learning rate')
+
+parser.add_argument('--cosine', action='store_true', default=False,
+                    help='use cosine lr schedule')
+
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum of SGD solver')
+
+parser.add_argument('--wd', '--weight_decay', default=1e-4, type=float,
+                    metavar='W', help='weight decay (default: 1e-4)',
+                    dest='weight_decay')
+
+parser.add_argument('--resume', default='', type=str,
+                    help='path to latest checkpoint (default: none)')
+
+parser.add_argument('--world-size', default=-1, type=int,
+                    help='number of nodes for distributed training')
+
+parser.add_argument('--rank', default=-1, type=int,
+                    help='node rank for distributed training')
+
+parser.add_argument('--dist-url', default='tcp://localhost:10001', type=str,
+                    help='url used to set up distributed training')
+
+parser.add_argument('--dist-backend', default='nccl', type=str,
+                    help='distributed backend')
+
+parser.add_argument('--seed', default=None, type=int,
+                    help='seed for initializing training. ')
+
+parser.add_argument('--gpu', default=None, type=int,
+                    help='GPU id to use.')
+
+parser.add_argument('--multiprocessing-distributed', action='store_true',
+                    help='Use multi-processing distributed training to launch '
+                         'N processes per node, which has N GPUs. This is the '
+                         'fastest way to use PyTorch for either single node or '
+                         'multi node data parallel training')
+
+parser.add_argument('--cuda_VISIBLE_DEVICES', default='0', type=str, \
+                        help='which gpu(s) can be used for distributed training')
+
+parser.add_argument('--num-class', default=10, type=int,
+                    help='number of class')
+
+parser.add_argument('--tau_proto', type=float, default=0.3,
+                    help='temperature for prototype')
+
+parser.add_argument('--alpha_mixup', type=float, default=8.0,
+                    help='alpha for beta distribution')
+
+parser.add_argument('--conf_th', type=float, default=0.5,
+                    help='prototype update threshold')
+
+parser.add_argument('--low-dim', default=128, type=int,
+                    help='embedding dimension')
+
+parser.add_argument('--latent-dim', default=512, type=int,
+                    help='latent embedding dimension')
+
+parser.add_argument('--proto_m', default=0.99, type=float,
+                    help='momentum for computing the momving average of prototypes')
+
+parser.add_argument('--alpha_weight', default=1.0, type=float,
+                    help='contrastive loss weight')
+
+parser.add_argument('--pseudo_label_weight_range', default='0.95, 0.8', type=str,
+                    help='pseudo target updating coefficient')
+
+parser.add_argument('--pro_weight_range', default='0.9, 0.5', type=str,
+                    help='prototype updating coefficient')
+
+parser.add_argument('--partial_rate', default=0.1, type=float, 
+                    help='ambiguity level (q)')
+
+parser.add_argument('--hierarchical', action='store_true', 
+                    help='for CIFAR100-H training')
+
+
+args = parser.parse_args()
+
+os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_VISIBLE_DEVICES
+
+torch.set_printoptions(precision=2, sci_mode=False)
+
+logging.basicConfig(format='[%(asctime)s] - %(message)s',
+    datefmt='%Y/%m/%d %H:%M:%S',
+    level=logging.DEBUG,
+    handlers=[
+        logging.FileHandler('./result/result_'+ args.exp_type + '_' + args.dataset + '_bs' + str(args.batch_size) + '_p' \
+                            + str(args.partial_rate) + '_seed' + str(args.seed) + '_dis_' + args.dist_url[-5:] + '.log'),
+        logging.StreamHandler()
+])
+
+
+def main():
+
+    args.pseudo_label_weight_range = [float(item) for item in args.pseudo_label_weight_range.split(',')]
+    args.pro_weight_range = [float(item) for item in args.pro_weight_range.split(',')]
+    
+    iterations = args.lr_decay_epochs.split(',')
+    args.lr_decay_epochs = list([])
+    for it in iterations:
+        args.lr_decay_epochs.append(int(it))
+
+    if args.seed is not None:
+        warnings.warn('You have chosen to seed training. This will turn on the CUDNN deterministic setting, which can slow down your training considerably! You may see unexpected behavior when restarting from checkpoints.')
+        print()
+    
+    if args.gpu is not None:
+        warnings.warn('You have chosen a specific GPU. This will completely disable data parallelism.')
+        print()
+    
+    if args.dist_url == "env://" and args.world_size == -1:
+        args.world_size = int(os.environ["WORLD_SIZE"])
+
+
+    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    
+    
+    model_path = 'exp_{exp}_ds_{ds}_lr_{lr}_ep_{ep}_aw_{aw}_arch_{arch}_pr_{pr}_sd_{seed}_dis_{dis}'.format(
+                                            exp=args.exp_type,
+                                            ds=args.dataset,
+                                            lr=args.lr,
+                                            ep=args.epochs,
+                                            aw=args.alpha_weight,
+                                            arch=args.arch,
+                                            pr=args.partial_rate,
+                                            seed=args.seed,
+                                            dis=args.dist_url[-5:]
+    )
+
+    
+    args.exp_dir = os.path.join(args.exp_dir, model_path)
+    if not os.path.exists(args.exp_dir):
+        os.makedirs(args.exp_dir)
+    
+    logging.info(args)
+    print()
+    
+    ngpus_per_node = torch.cuda.device_count()
+    
+    if args.multiprocessing_distributed:
+        # Since we have ngpus_per_node processes per node, the total world_size
+        # needs to be adjusted accordingly
+        args.world_size = ngpus_per_node * args.world_size
+        # Use torch.multiprocessing.spawn to launch distributed processes: the
+        # main_worker process function
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+    else:
+        # Simply call main_worker function
+        main_worker(args.gpu, ngpus_per_node, args)
+
+
+        
+def main_worker(gpu, ngpus_per_node, args):
+    
+    cudnn.benchmark = True
+    
+    args.gpu = gpu
+    
+    if args.seed is not None:
+        random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        cudnn.deterministic = True
+        
+    if args.gpu is not None:
+        print("Use GPU: {} for training\n".format(args.gpu))
+        
+    # suppress printing if not master
+    if args.multiprocessing_distributed and args.gpu != 0:
+        def print_pass(*args):
+            pass
+        builtins.print = print_pass
+    
+    if args.distributed:
+        if args.dist_url == "env://" and args.rank == -1:
+            args.rank = int(os.environ["RANK"])
+        if args.multiprocessing_distributed:
+            # For multiprocessing distributed training, rank needs to be the
+            # global rank among all the processes
+            args.rank = args.rank * ngpus_per_node + gpu
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+                                world_size=args.world_size, rank=args.rank)
+    
+    if args.gpu==0:
+        print("=> creating model '{}'\n".format(args.arch))
+    
+    model = PaPi(args, PaPiNet)
+    
+    if args.distributed:
+        # For multiprocessing distributed, DistributedDataParallel constructor
+        # should always set the single device scope, otherwise,
+        # DistributedDataParallel will use all available devices.
+        if args.gpu is not None:
+            torch.cuda.set_device(args.gpu)
+            model.cuda(args.gpu)
+            # When using a single GPU per process and per
+            # DistributedDataParallel, we need to divide the batch size
+            # ourselves based on the total number of GPUs we have
+            args.batch_size = int(args.batch_size / ngpus_per_node)
+            args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        else:
+            model.cuda()
+            # DistributedDataParallel will divide and allocate batch_size to all
+            # available GPUs if device_ids are not set
+            model = torch.nn.parallel.DistributedDataParallel(model)
+    elif args.gpu is not None:
+        torch.cuda.set_device(args.gpu)
+        model = model.cuda(args.gpu)
+        # comment out the following line for debugging
+        raise NotImplementedError("Only DistributedDataParallel is supported.")
+    else:
+        # AllGather implementation (batch shuffle, queue update, etc.) in
+        # this code only supports DistributedDataParallel.
+        raise NotImplementedError("Only DistributedDataParallel is supported.")
+    
+    optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            if args.gpu is None:
+                checkpoint = torch.load(args.resume)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(args.gpu)
+                checkpoint = torch.load(args.resume, map_location=loc)
+            args.start_epoch = checkpoint['epoch']
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            print("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
+
+
+    if args.dataset == 'fmnist':
+        train_loader, train_partialY_matrix, train_sampler, test_loader = load_fmnist(args)
+
+    elif args.dataset == 'SVHN':
+        train_loader, train_partialY_matrix, train_sampler, test_loader = load_svhn(args)
+        
+    elif args.dataset == 'cifar10':
+        train_loader, train_partialY_matrix, train_sampler, test_loader = load_cifar10(args)
+
+    elif args.dataset == 'cifar100':
+        train_loader, train_partialY_matrix, train_sampler, test_loader = load_cifar100(args)
+    
+    elif args.dataset == 'miniImagenet':
+        train_loader, train_partialY_matrix, train_sampler, test_loader = load_miniImagenet(args)
+    
+    else:
+        raise NotImplementedError("You have chosen an unsupported dataset. Please check and try again.")
+
+    if args.gpu==0:
+        logging.info('\nAverage candidate num: {}\n'.format(train_partialY_matrix.sum(1).mean()))
+
+    tempY = train_partialY_matrix.sum(dim=1).unsqueeze(1).repeat(1, train_partialY_matrix.shape[1])
+    uniform_confidence = train_partialY_matrix.float() / tempY
+    uniform_confidence = uniform_confidence.cuda()
+    
+    loss_PaPi_func = PaPiLoss(predicted_score_cls=uniform_confidence, pseudo_label_weight=0.99)
+    
+    sim_criterion = torch.nn.KLDivLoss(reduction='batchmean').cuda()
+
+
+    best_acc = 0
+
+    for epoch in range(args.start_epoch, args.epochs):
+    
+        is_best = False
+        
+        if args.distributed:
+            train_sampler.set_epoch(epoch)
+        
+        adjust_learning_rate(args, optimizer, epoch)
+        
+        loss_PaPi_func.set_alpha(epoch, args)
+
+        acc_train_cls, loss_cls_log, loss_PaPi_log = train(train_loader, model, loss_PaPi_func, optimizer, epoch, args, sim_criterion)
+        
+        loss_PaPi_func.set_pseudo_label_weight(epoch, args)
+        model.module.set_prototype_update_weight(epoch, args)
+
+        acc_test, _ = test(model, test_loader, args, epoch)
+
+        if acc_test.item() > best_acc:
+            best_acc = acc_test.item()
+        
+        if args.gpu==0:
+            with open(os.path.join(args.exp_dir, 'result.log'), 'a+') as f:
+                f.write('Epoch {}: Train_Acc {}, Test_Acc {}, Best_Acc {}. (lr:{})\n'.format(\
+                 epoch, acc_train_cls.avg, acc_test.item(), best_acc, optimizer.param_groups[0]['lr']))
+
+            logging.info('Epoch {}: Train_Acc {}, Test_Acc {}, Best_Acc {}. (lr:{})\n'.format(\
+                  epoch, acc_train_cls.avg, acc_test.item(), best_acc, optimizer.param_groups[0]['lr']))
+
+
+            
+def train(train_loader, model, loss_PaPi_func, optimizer, epoch, args, sim_criterion):
+    batch_time = AverageMeter('Time', ':1.2f')
+    data_time = AverageMeter('Data', ':1.2f')
+    acc_cls = AverageMeter('Acc@Cls', ':2.2f')
+    loss_cls_log = AverageMeter('Loss@cls', ':2.2f')
+    loss_PaPi_log = AverageMeter('Loss@PaPi', ':2.2f')
+
+    progress = ProgressMeter(
+        len(train_loader),
+        [batch_time, data_time, acc_cls, loss_cls_log, loss_PaPi_log],
+        prefix="Epoch: [{}]".format(epoch)
+    )
+
+    model.train()
+    
+    end = time.time()
+    
+    for i, (images_1, images_2, labels, true_labels, index) in enumerate(train_loader):
+
+        data_time.update(time.time() - end)
+        
+        X_1, X_2, Y, index = images_1.cuda(), images_2.cuda(), labels.cuda(), index.cuda()
+        
+        Y_true = true_labels.long().detach().cuda()
+        
+        Lambda = np.random.beta(args.alpha_mixup, args.alpha_mixup)
+        idx_rp = torch.randperm(args.batch_size) 
+        X_1_rp = X_1[idx_rp]
+        X_2_rp = X_2[idx_rp]
+        Y_rp = Y[idx_rp]
+
+        X_1_mix = Lambda * X_1 + (1 - Lambda) * X_1_rp
+        X_2_mix = Lambda * X_2 + (1 - Lambda) * X_2_rp
+        Y_mix = Lambda * Y + (1 - Lambda) * Y_rp
+
+        cls_out_1, cls_out_2, logits_prot_1, logits_prot_2, logits_prot_1_mix, logits_prot_2_mix = \
+        model(img_q=X_1, img_k=X_2, img_q_mix=X_1_mix, img_k_mix=X_2_mix, partial_Y=Y, Y_true=Y_true, args=args)
+        
+        batch_size = cls_out_1.shape[0]
+        
+        loss_PaPi_func.update_weight_byclsout1(cls_predicted_score=cls_out_1, batch_index=index, batch_partial_Y=Y, args=args)
+        
+        cls_loss_1, sim_loss_2, alpha_td = loss_PaPi_func(cls_out_1, cls_out_2, logits_prot_1, logits_prot_2, logits_prot_1_mix, logits_prot_2_mix, idx_rp, Lambda, index, args, sim_criterion)
+        
+        loss = cls_loss_1 + alpha_td * sim_loss_2
+        
+        loss_cls_log.update(cls_loss_1.item())
+        loss_PaPi_log.update(loss.item())
+
+        acc = accuracy(cls_out_1, Y_true)
+        acc_cls.update(acc[0].item())
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        batch_time.update(time.time() - end)
+        end = time.time()
+        
+        if args.gpu==0:
+            if (i % 50 == 0) or ((i + 1) % len(train_loader) == 0):
+                logging.info('Epoch:[{0}][{1}/{2}]\t'
+                    'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                    'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                    'A_cls {Acc_cls.val:.4f} ({Acc_cls.avg:.4f})\t'
+                    'L_cls {Loss_cls.val:.4f} ({Loss_cls.avg:.4f})\t'
+                    'L_all {Loss_PaPi.val:.4f} ({Loss_PaPi.avg:.4f})\t'.format(
+                        epoch, i + 1, len(train_loader), batch_time=batch_time,
+                        data_time=data_time, Acc_cls=acc_cls,
+                        Loss_cls=loss_cls_log, Loss_PaPi=loss_PaPi_log
+                    )
+                )
+        
+    return acc_cls, loss_cls_log, loss_PaPi_log
+
+
+
+def test(model, test_loader, args, epoch):
+    with torch.no_grad():
+
+        print('\n=====> Evaluation...\n')       
+        model.eval()    
+        
+        top1_acc = AverageMeter("Top1")
+        top5_acc = AverageMeter("Top5")
+        
+        for batch_idx, (images, labels) in enumerate(test_loader):
+            images, labels = images.cuda(), labels.cuda()
+            
+            outputs, outputs_pro = model(img_q=images, args=args, eval_only=True)
+            
+            acc1, acc5 = accuracy(outputs, labels, topk=(1, 5))
+            
+            top1_acc.update(acc1[0])
+            top5_acc.update(acc5[0])
+
+            if args.gpu==0:
+                if (batch_idx % 10 == 0) or ((batch_idx + 1) % len(test_loader) == 0):
+                    logging.info(
+                        'Test:[{0}/{1}]\t'
+                        'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                        'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'\
+                        .format(batch_idx + 1, len(test_loader), top1=top1_acc, top5=top5_acc)
+                    )
+        
+        # average across all processes
+        acc_tensors = torch.Tensor([top1_acc.avg, top5_acc.avg]).cuda(args.gpu)
+        
+        dist.all_reduce(acc_tensors)        
+        
+        acc_tensors /= args.world_size
+        
+        if args.gpu==0:
+            logging.info('Top1 Accuracy is %.2f%%, Top5 Accuracy is %.2f%%\n'%(acc_tensors[0], acc_tensors[1]))          
+
+    return acc_tensors[0], acc_tensors[1]
+    
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+File Path: utils/autoaugment.py
+Content:
+# https://github.com/DeepVoltaire/AutoAugment/blob/master/autoaugment.py
+
+from PIL import Image, ImageEnhance, ImageOps, ImageDraw
+import numpy as np
+import random
+
+
+class ImageNetPolicy(object):
+    """ Randomly choose one of the best 24 Sub-policies on ImageNet.
+        Example:
+        >>> policy = ImageNetPolicy()
+        >>> transformed = policy(image)
+        Example as a PyTorch Transform:
+        >>> transform=transforms.Compose([
+        >>>     transforms.Resize(256),
+        >>>     ImageNetPolicy(),
+        >>>     transforms.ToTensor()])
+    """
+    def __init__(self, fillcolor=(128, 128, 128)):
+        self.policies = [
+            SubPolicy(0.4, "posterize", 8, 0.6, "rotate", 9, fillcolor),
+            SubPolicy(0.6, "solarize", 5, 0.6, "autocontrast", 5, fillcolor),
+            SubPolicy(0.8, "equalize", 8, 0.6, "equalize", 3, fillcolor),
+            SubPolicy(0.6, "posterize", 7, 0.6, "posterize", 6, fillcolor),
+            SubPolicy(0.4, "equalize", 7, 0.2, "solarize", 4, fillcolor),
+
+            SubPolicy(0.4, "equalize", 4, 0.8, "rotate", 8, fillcolor),
+            SubPolicy(0.6, "solarize", 3, 0.6, "equalize", 7, fillcolor),
+            SubPolicy(0.8, "posterize", 5, 1.0, "equalize", 2, fillcolor),
+            SubPolicy(0.2, "rotate", 3, 0.6, "solarize", 8, fillcolor),
+            SubPolicy(0.6, "equalize", 8, 0.4, "posterize", 6, fillcolor),
+
+            SubPolicy(0.8, "rotate", 8, 0.4, "color", 0, fillcolor),
+            SubPolicy(0.4, "rotate", 9, 0.6, "equalize", 2, fillcolor),
+            SubPolicy(0.0, "equalize", 7, 0.8, "equalize", 8, fillcolor),
+            SubPolicy(0.6, "invert", 4, 1.0, "equalize", 8, fillcolor),
+            SubPolicy(0.6, "color", 4, 1.0, "contrast", 8, fillcolor),
+
+            SubPolicy(0.8, "rotate", 8, 1.0, "color", 2, fillcolor),
+            SubPolicy(0.8, "color", 8, 0.8, "solarize", 7, fillcolor),
+            SubPolicy(0.4, "sharpness", 7, 0.6, "invert", 8, fillcolor),
+            SubPolicy(0.6, "shearX", 5, 1.0, "equalize", 9, fillcolor),
+            SubPolicy(0.4, "color", 0, 0.6, "equalize", 3, fillcolor),
+
+            SubPolicy(0.4, "equalize", 7, 0.2, "solarize", 4, fillcolor),
+            SubPolicy(0.6, "solarize", 5, 0.6, "autocontrast", 5, fillcolor),
+            SubPolicy(0.6, "invert", 4, 1.0, "equalize", 8, fillcolor),
+            SubPolicy(0.6, "color", 4, 1.0, "contrast", 8, fillcolor),
+            SubPolicy(0.8, "equalize", 8, 0.6, "equalize", 3, fillcolor),
+            
+            SubPolicy(0.1, "invert", 7, 0.2, "contrast", 6, fillcolor),  # set-1
+            SubPolicy(0.7, "rotate", 2, 0.3, "translateX", 9, fillcolor),
+            SubPolicy(0.8, "sharpness", 1, 0.9, "sharpness", 3, fillcolor),
+            SubPolicy(0.5, "shearY", 8, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.5, "autocontrast", 8, 0.9, "equalize", 2, fillcolor),
+
+            SubPolicy(0.2, "shearY", 7, 0.3, "posterize", 7, fillcolor), # set-3
+            SubPolicy(0.4, "color", 3, 0.6, "brightness", 7, fillcolor),
+            SubPolicy(0.3, "sharpness", 9, 0.7, "brightness", 9, fillcolor),
+            SubPolicy(0.6, "equalize", 5, 0.5, "equalize", 1, fillcolor),
+            SubPolicy(0.6, "contrast", 7, 0.6, "sharpness", 5, fillcolor),
+
+            SubPolicy(0.7, "color", 7, 0.5, "translateX", 8, fillcolor),    #set-11
+            SubPolicy(0.3, "equalize", 7, 0.4, "autocontrast", 8, fillcolor),
+            SubPolicy(0.4, "translateY", 3, 0.2, "sharpness", 6, fillcolor),
+            SubPolicy(0.9, "brightness", 6, 0.2, "color", 8, fillcolor),
+            SubPolicy(0.5, "solarize", 2, 0.0, "invert", 3, fillcolor),
+
+            SubPolicy(0.2, "equalize", 0, 0.6, "autocontrast", 0, fillcolor),
+            SubPolicy(0.2, "equalize", 8, 0.8, "equalize", 4, fillcolor),
+            SubPolicy(0.9, "color", 9, 0.6, "equalize", 6, fillcolor),
+            SubPolicy(0.8, "autocontrast", 4, 0.2, "solarize", 8, fillcolor),
+            SubPolicy(0.1, "brightness", 3, 0.7, "color", 0, fillcolor),
+
+            SubPolicy(0.4, "solarize", 5, 0.9, "autocontrast", 3, fillcolor), # set-2 
+            SubPolicy(0.9, "translateY", 9, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "autocontrast", 2, 0.8, "solarize", 3, fillcolor),
+            SubPolicy(0.8, "equalize", 8, 0.1, "invert", 3, fillcolor),
+            SubPolicy(0.7, "translateY", 9, 0.9, "autocontrast", 1, fillcolor),
+            
+            SubPolicy(0.4, "solarize",  5, 0.9, "autocontrast", 3, fillcolor), 
+            SubPolicy(0.9, "translateY", 9, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "autocontrast",  2, 0.8, "solarize", 3, fillcolor),
+            SubPolicy(0.8, "equalize",  8, 0.1, "invert", 3, fillcolor),
+            SubPolicy(0.7, "translateY", 9, 0.9, "autocontrast", 1, fillcolor),
+   
+            SubPolicy(0.4, "solarize",  5, 0.9, "autocontrast", 1, fillcolor), 
+            SubPolicy(0.8, "translateY",  9, 0.9, "translateY", 9, fillcolor),
+            SubPolicy(0.8, "autocontrast",  0, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.2, "translateY",  7, 0.9, "color", 6, fillcolor),
+            SubPolicy(0.7, "equalize",  6, 0.4, "color", 9, fillcolor),
+             
+            SubPolicy(0.3, "brightness",  7, 0.5, "autocontrast", 8, fillcolor), 
+            SubPolicy(0.9, "autocontrast",  4, 0.5, "autocontrast", 6, fillcolor),
+            SubPolicy(0.3, "solarize",  5, 0.6, "equalize", 5, fillcolor),
+            SubPolicy(0.2, "translateY",  4, 0.3, "sharpness", 3, fillcolor),
+            SubPolicy(0.0, "brightness",  8, 0.8, "color", 8, fillcolor),
+
+            SubPolicy(0.2, "solarize",  6, 0.8, "color", 6, fillcolor), 
+            SubPolicy(0.2, "solarize",  6, 0.8, "autocontrast", 1, fillcolor),
+            SubPolicy(0.4, "solarize",  1, 0.6, "equalize", 5, fillcolor),
+            SubPolicy(0.0, "brightness",  0, 0.5, "solarize", 2, fillcolor),
+            SubPolicy(0.9, "autocontrast",  5, 0.5, "brightness", 3, fillcolor),
+
+            SubPolicy(0.7, "contrast",  5, 0.0, "brightness", 2, fillcolor), 
+            SubPolicy(0.2, "solarize",  8, 0.1, "solarize", 5, fillcolor),
+            SubPolicy(0.5, "contrast",  1, 0.2, "translateY", 9, fillcolor),
+            SubPolicy(0.6, "autocontrast",  5, 0.0, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "autocontrast",  4, 0.8, "equalize", 4, fillcolor),
+            
+            SubPolicy(0.0, "brightness",  7, 0.4, "equalize", 7, fillcolor), 
+            SubPolicy(0.2, "solarize",  5, 0.7, "equalize", 5, fillcolor),
+            SubPolicy(0.6, "equalize",  8, 0.6, "color", 2, fillcolor),
+            SubPolicy(0.3, "color",  7, 0.2, "color", 4, fillcolor),
+            SubPolicy(0.5, "autocontrast",  2, 0.7, "solarize", 2, fillcolor),
+            
+            SubPolicy(0.2, "autocontrast",  0, 0.1, "equalize", 0, fillcolor), 
+            SubPolicy(0.6, "shearY",  5, 0.6, "equalize", 5, fillcolor),
+            SubPolicy(0.9, "brightness",  3, 0.4, "autocontrast", 1, fillcolor),
+            SubPolicy(0.8, "equalize",  8, 0.7, "equalize", 7, fillcolor),
+            SubPolicy(0.7, "equalize",  7, 0.5, "solarize", 0, fillcolor),
+            
+            SubPolicy(0.8, "equalize",  4, 0.8, "translateY", 9, fillcolor), 
+            SubPolicy(0.8, "translateY",  9, 0.6, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "translateY",  0, 0.5, "translateY", 9, fillcolor),
+            SubPolicy(0.5, "autocontrast",  3, 0.3, "solarize", 4, fillcolor),
+            SubPolicy(0.5, "solarize",  3, 0.4, "equalize", 4, fillcolor),
+            
+            SubPolicy(0.1, "autocontrast",  5, 0.0, "brightness", 0, fillcolor), 
+            SubPolicy(0.7, "equalize",  7, 0.6, "autocontrast", 4, fillcolor),
+            SubPolicy(0.1, "color",  8, 0.2, "shearY", 3, fillcolor),
+            SubPolicy(0.4, "shearY",  2, 0.7, "rotate", 0, fillcolor),
+            
+            SubPolicy(0.1, "shearY",  3, 0.9, "autocontrast", 5, fillcolor), 
+            SubPolicy(0.5, "equalize",  0, 0.6, "solarize", 6, fillcolor),
+            SubPolicy(0.3, "autocontrast",  5, 0.2, "rotate", 7, fillcolor),
+            SubPolicy(0.8, "equalize",  2, 0.4, "invert", 0, fillcolor),
+            
+            SubPolicy(0.9, "equalize",  5, 0.7, "color", 0, fillcolor), 
+            SubPolicy(0.1, "equalize",  1, 0.1, "shearY", 3, fillcolor),
+            SubPolicy(0.7, "autocontrast",  3, 0.7, "equalize", 0, fillcolor),
+            SubPolicy(0.5, "brightness",  1, 0.1, "contrast", 7, fillcolor),
+            SubPolicy(0.1, "contrast",  4, 0.6, "solarize", 5, fillcolor),
+            
+            SubPolicy(0.2, "solarize",  3, 0.0, "shearX", 0, fillcolor), 
+            SubPolicy(0.3, "translateX",  0, 0.6, "translateX", 0, fillcolor),
+            SubPolicy(0.5, "equalize",  9, 0.6, "translateY", 7, fillcolor),
+            SubPolicy(0.1, "shearX",  0, 0.5, "sharpness", 1, fillcolor),
+            SubPolicy(0.8, "equalize",  6, 0.3, "invert", 6, fillcolor),
+            
+            SubPolicy(0.4, "shearX",  4, 0.9, "autocontrast", 2, fillcolor),
+            SubPolicy(0.0, "shearX",  3, 0.0, "posterize", 3, fillcolor),
+            SubPolicy(0.4, "solarize",  3, 0.2, "color", 4, fillcolor),
+            SubPolicy(0.1, "equalize",  4, 0.7, "equalize", 6, fillcolor),
+            
+            SubPolicy(0.3, "equalize",  8, 0.4, "autocontrast", 3, fillcolor), 
+            SubPolicy(0.6, "solarize",  4, 0.7, "autocontrast", 6, fillcolor),
+            SubPolicy(0.2, "autocontrast",  9, 0.4, "brightness", 8, fillcolor),
+            SubPolicy(0.1, "equalize",  0, 0.0, "equalize", 6, fillcolor),
+            SubPolicy(0.8, "equalize",  4, 0.0, "equalize", 4, fillcolor),
+            
+            SubPolicy(0.5, "equalize",  5, 0.1, "autocontrast", 2, fillcolor), 
+            SubPolicy(0.5, "solarize",  5, 0.9, "autocontrast", 5, fillcolor),
+        ]
+
+
+    def __call__(self, img):
+        policy_idx = random.randint(0, len(self.policies) - 1)
+        return self.policies[policy_idx](img)
+
+    def __repr__(self):
+        return "AutoAugment ImageNet Policy"
+
+
+class CIFAR10Policy(object):
+    """ Randomly choose one of the best 25 Sub-policies on CIFAR10.
+        Example:
+        >>> policy = CIFAR10Policy()
+        >>> transformed = policy(image)
+        Example as a PyTorch Transform:
+        >>> transform=transforms.Compose([
+        >>>     transforms.Resize(256),
+        >>>     CIFAR10Policy(),
+        >>>     transforms.ToTensor()])
+    """
+    def __init__(self, fillcolor=(128, 128, 128)):
+        self.policies = [
+            SubPolicy(0.1, "invert", 7, 0.2, "contrast", 6, fillcolor),  # set-1
+            SubPolicy(0.7, "rotate", 2, 0.3, "translateX", 9, fillcolor),
+            SubPolicy(0.8, "sharpness", 1, 0.9, "sharpness", 3, fillcolor),
+            SubPolicy(0.5, "shearY", 8, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.5, "autocontrast", 8, 0.9, "equalize", 2, fillcolor),
+
+            SubPolicy(0.2, "shearY", 7, 0.3, "posterize", 7, fillcolor), # set-3
+            SubPolicy(0.4, "color", 3, 0.6, "brightness", 7, fillcolor),
+            SubPolicy(0.3, "sharpness", 9, 0.7, "brightness", 9, fillcolor),
+            SubPolicy(0.6, "equalize", 5, 0.5, "equalize", 1, fillcolor),
+            SubPolicy(0.6, "contrast", 7, 0.6, "sharpness", 5, fillcolor),
+
+            SubPolicy(0.7, "color", 7, 0.5, "translateX", 8, fillcolor),    #set-11
+            SubPolicy(0.3, "equalize", 7, 0.4, "autocontrast", 8, fillcolor),
+            SubPolicy(0.4, "translateY", 3, 0.2, "sharpness", 6, fillcolor),
+            SubPolicy(0.9, "brightness", 6, 0.2, "color", 8, fillcolor),
+            SubPolicy(0.5, "solarize", 2, 0.0, "invert", 3, fillcolor),
+
+            SubPolicy(0.2, "equalize", 0, 0.6, "autocontrast", 0, fillcolor),
+            SubPolicy(0.2, "equalize", 8, 0.8, "equalize", 4, fillcolor),
+            SubPolicy(0.9, "color", 9, 0.6, "equalize", 6, fillcolor),
+            SubPolicy(0.8, "autocontrast", 4, 0.2, "solarize", 8, fillcolor),
+            SubPolicy(0.1, "brightness", 3, 0.7, "color", 0, fillcolor),
+
+            SubPolicy(0.4, "solarize", 5, 0.9, "autocontrast", 3, fillcolor), # set-2 
+            SubPolicy(0.9, "translateY", 9, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "autocontrast", 2, 0.8, "solarize", 3, fillcolor),
+            SubPolicy(0.8, "equalize", 8, 0.1, "invert", 3, fillcolor),
+            SubPolicy(0.7, "translateY", 9, 0.9, "autocontrast", 1, fillcolor),
+            
+            SubPolicy(0.4, "solarize",  5, 0.9, "autocontrast", 3, fillcolor), 
+            SubPolicy(0.9, "translateY", 9, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "autocontrast",  2, 0.8, "solarize", 3, fillcolor),
+            SubPolicy(0.8, "equalize",  8, 0.1, "invert", 3, fillcolor),
+            SubPolicy(0.7, "translateY", 9, 0.9, "autocontrast", 1, fillcolor),
+   
+            SubPolicy(0.4, "solarize",  5, 0.9, "autocontrast", 1, fillcolor), 
+            SubPolicy(0.8, "translateY",  9, 0.9, "translateY", 9, fillcolor),
+            SubPolicy(0.8, "autocontrast",  0, 0.7, "translateY", 9, fillcolor),
+            SubPolicy(0.2, "translateY",  7, 0.9, "color", 6, fillcolor),
+            SubPolicy(0.7, "equalize",  6, 0.4, "color", 9, fillcolor),
+             
+            SubPolicy(0.3, "brightness",  7, 0.5, "autocontrast", 8, fillcolor), 
+            SubPolicy(0.9, "autocontrast",  4, 0.5, "autocontrast", 6, fillcolor),
+            SubPolicy(0.3, "solarize",  5, 0.6, "equalize", 5, fillcolor),
+            SubPolicy(0.2, "translateY",  4, 0.3, "sharpness", 3, fillcolor),
+            SubPolicy(0.0, "brightness",  8, 0.8, "color", 8, fillcolor),
+
+            SubPolicy(0.2, "solarize",  6, 0.8, "color", 6, fillcolor), 
+            SubPolicy(0.2, "solarize",  6, 0.8, "autocontrast", 1, fillcolor),
+            SubPolicy(0.4, "solarize",  1, 0.6, "equalize", 5, fillcolor),
+            SubPolicy(0.0, "brightness",  0, 0.5, "solarize", 2, fillcolor),
+            SubPolicy(0.9, "autocontrast",  5, 0.5, "brightness", 3, fillcolor),
+
+            SubPolicy(0.7, "contrast",  5, 0.0, "brightness", 2, fillcolor), 
+            SubPolicy(0.2, "solarize",  8, 0.1, "solarize", 5, fillcolor),
+            SubPolicy(0.5, "contrast",  1, 0.2, "translateY", 9, fillcolor),
+            SubPolicy(0.6, "autocontrast",  5, 0.0, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "autocontrast",  4, 0.8, "equalize", 4, fillcolor),
+            
+            SubPolicy(0.0, "brightness",  7, 0.4, "equalize", 7, fillcolor), 
+            SubPolicy(0.2, "solarize",  5, 0.7, "equalize", 5, fillcolor),
+            SubPolicy(0.6, "equalize",  8, 0.6, "color", 2, fillcolor),
+            SubPolicy(0.3, "color",  7, 0.2, "color", 4, fillcolor),
+            SubPolicy(0.5, "autocontrast",  2, 0.7, "solarize", 2, fillcolor),
+            
+            SubPolicy(0.2, "autocontrast",  0, 0.1, "equalize", 0, fillcolor), 
+            SubPolicy(0.6, "shearY",  5, 0.6, "equalize", 5, fillcolor),
+            SubPolicy(0.9, "brightness",  3, 0.4, "autocontrast", 1, fillcolor),
+            SubPolicy(0.8, "equalize",  8, 0.7, "equalize", 7, fillcolor),
+            SubPolicy(0.7, "equalize",  7, 0.5, "solarize", 0, fillcolor),
+            
+            SubPolicy(0.8, "equalize",  4, 0.8, "translateY", 9, fillcolor), 
+            SubPolicy(0.8, "translateY",  9, 0.6, "translateY", 9, fillcolor),
+            SubPolicy(0.9, "translateY",  0, 0.5, "translateY", 9, fillcolor),
+            SubPolicy(0.5, "autocontrast",  3, 0.3, "solarize", 4, fillcolor),
+            SubPolicy(0.5, "solarize",  3, 0.4, "equalize", 4, fillcolor),
+            
+            SubPolicy(0.1, "autocontrast",  5, 0.0, "brightness", 0, fillcolor), 
+            SubPolicy(0.7, "equalize",  7, 0.6, "autocontrast", 4, fillcolor),
+            SubPolicy(0.1, "color",  8, 0.2, "shearY", 3, fillcolor),
+            SubPolicy(0.4, "shearY",  2, 0.7, "rotate", 0, fillcolor),
+            
+            SubPolicy(0.1, "shearY",  3, 0.9, "autocontrast", 5, fillcolor), 
+            SubPolicy(0.5, "equalize",  0, 0.6, "solarize", 6, fillcolor),
+            SubPolicy(0.3, "autocontrast",  5, 0.2, "rotate", 7, fillcolor),
+            SubPolicy(0.8, "equalize",  2, 0.4, "invert", 0, fillcolor),
+            
+            SubPolicy(0.9, "equalize",  5, 0.7, "color", 0, fillcolor), 
+            SubPolicy(0.1, "equalize",  1, 0.1, "shearY", 3, fillcolor),
+            SubPolicy(0.7, "autocontrast",  3, 0.7, "equalize", 0, fillcolor),
+            SubPolicy(0.5, "brightness",  1, 0.1, "contrast", 7, fillcolor),
+            SubPolicy(0.1, "contrast",  4, 0.6, "solarize", 5, fillcolor),
+            
+            SubPolicy(0.2, "solarize",  3, 0.0, "shearX", 0, fillcolor), 
+            SubPolicy(0.3, "translateX",  0, 0.6, "translateX", 0, fillcolor),
+            SubPolicy(0.5, "equalize",  9, 0.6, "translateY", 7, fillcolor),
+            SubPolicy(0.1, "shearX",  0, 0.5, "sharpness", 1, fillcolor),
+            SubPolicy(0.8, "equalize",  6, 0.3, "invert", 6, fillcolor),
+            
+            SubPolicy(0.4, "shearX",  4, 0.9, "autocontrast", 2, fillcolor),
+            SubPolicy(0.0, "shearX",  3, 0.0, "posterize", 3, fillcolor),
+            SubPolicy(0.4, "solarize",  3, 0.2, "color", 4, fillcolor),
+            SubPolicy(0.1, "equalize",  4, 0.7, "equalize", 6, fillcolor),
+            
+            SubPolicy(0.3, "equalize",  8, 0.4, "autocontrast", 3, fillcolor), 
+            SubPolicy(0.6, "solarize",  4, 0.7, "autocontrast", 6, fillcolor),
+            SubPolicy(0.2, "autocontrast",  9, 0.4, "brightness", 8, fillcolor),
+            SubPolicy(0.1, "equalize",  0, 0.0, "equalize", 6, fillcolor),
+            SubPolicy(0.8, "equalize",  4, 0.0, "equalize", 4, fillcolor),
+            
+            SubPolicy(0.5, "equalize",  5, 0.1, "autocontrast", 2, fillcolor), 
+            SubPolicy(0.5, "solarize",  5, 0.9, "autocontrast", 5, fillcolor),
+            SubPolicy(0.6, "autocontrast",  1, 0.7, "autocontrast", 8, fillcolor),
+            SubPolicy(0.2, "equalize",  0, 0.1, "autocontrast", 2, fillcolor),
+            SubPolicy(0.6, "equalize",  9, 0.4, "equalize", 4, fillcolor),
+        ]
+
+
+    def __call__(self, img):
+        policy_idx = random.randint(0, len(self.policies) - 1)
+        return self.policies[policy_idx](img)
+
+    def __repr__(self):
+        return "AutoAugment CIFAR10 Policy"
+
+
+class SVHNPolicy(object):
+    """ Randomly choose one of the best 25 Sub-policies on SVHN.
+        Example:
+        >>> policy = SVHNPolicy()
+        >>> transformed = policy(image)
+        Example as a PyTorch Transform:
+        >>> transform=transforms.Compose([
+        >>>     transforms.Resize(256),
+        >>>     SVHNPolicy(),
+        >>>     transforms.ToTensor()])
+    """
+    def __init__(self, fillcolor=(128, 128, 128)):
+        self.policies = [
+            SubPolicy(0.9, "shearX", 4, 0.2, "invert", 3, fillcolor),
+            SubPolicy(0.9, "shearY", 8, 0.7, "invert", 5, fillcolor),
+            SubPolicy(0.6, "equalize", 5, 0.6, "solarize", 6, fillcolor),
+            SubPolicy(0.9, "invert", 3, 0.6, "equalize", 3, fillcolor),
+            SubPolicy(0.6, "equalize", 1, 0.9, "rotate", 3, fillcolor),
+
+            SubPolicy(0.9, "shearX", 4, 0.8, "autocontrast", 3, fillcolor),
+            SubPolicy(0.9, "shearY", 8, 0.4, "invert", 5, fillcolor),
+            SubPolicy(0.9, "shearY", 5, 0.2, "solarize", 6, fillcolor),
+            SubPolicy(0.9, "invert", 6, 0.8, "autocontrast", 1, fillcolor),
+            SubPolicy(0.6, "equalize", 3, 0.9, "rotate", 3, fillcolor),
+
+            SubPolicy(0.9, "shearX", 4, 0.3, "solarize", 3, fillcolor),
+            SubPolicy(0.8, "shearY", 8, 0.7, "invert", 4, fillcolor),
+            SubPolicy(0.9, "equalize", 5, 0.6, "translateY", 6, fillcolor),
+            SubPolicy(0.9, "invert", 4, 0.6, "equalize", 7, fillcolor),
+            SubPolicy(0.3, "contrast", 3, 0.8, "rotate", 4, fillcolor),
+
+            SubPolicy(0.8, "invert", 5, 0.0, "translateY", 2, fillcolor),
+            SubPolicy(0.7, "shearY", 6, 0.4, "solarize", 8, fillcolor),
+            SubPolicy(0.6, "invert", 4, 0.8, "rotate", 4, fillcolor),
+            SubPolicy(0.3, "shearY", 7, 0.9, "translateX", 3, fillcolor),
+            SubPolicy(0.1, "shearX", 6, 0.6, "invert", 5, fillcolor),
+
+            SubPolicy(0.7, "solarize", 2, 0.6, "translateY", 7, fillcolor),
+            SubPolicy(0.8, "shearY", 4, 0.8, "invert", 8, fillcolor),
+            SubPolicy(0.7, "shearX", 9, 0.8, "translateY", 3, fillcolor),
+            SubPolicy(0.8, "shearY", 5, 0.7, "autocontrast", 3, fillcolor),
+            SubPolicy(0.7, "shearX", 2, 0.1, "invert", 5, fillcolor)
+        ]
+
+
+    def __call__(self, img):
+        policy_idx = random.randint(0, len(self.policies) - 1)
+        return self.policies[policy_idx](img)
+
+    def __repr__(self):
+        return "AutoAugment SVHN Policy"
+
+
+class SubPolicy(object):
+    def __init__(self, p1, operation1, magnitude_idx1, p2, operation2, magnitude_idx2, fillcolor=(128, 128, 128)):
+        ranges = {
+            "shearX": np.linspace(0, 0.3, 10),
+            "shearY": np.linspace(0, 0.3, 10),
+            "translateX": np.linspace(0, 150 / 331, 10),
+            "translateY": np.linspace(0, 150 / 331, 10),
+            "rotate": np.linspace(0, 30, 10),
+            "color": np.linspace(0.0, 0.9, 10),
+            "posterize": np.round(np.linspace(8, 4, 10), 0).astype(np.int_),
+            "solarize": np.linspace(256, 0, 10),
+            "contrast": np.linspace(0.0, 0.9, 10),
+            "sharpness": np.linspace(0.0, 0.9, 10),
+            "brightness": np.linspace(0.0, 0.9, 10),
+            "autocontrast": [0] * 10,
+            "equalize": [0] * 10,
+            "invert": [0] * 10,
+            "cutout": np.linspace(0.0, 0.2, 10),
+        }
+    
+        def Cutout(img, v):  # [0, 60] => percentage: [0, 0.2]
+            #assert 0.0 <= v <= 0.2
+            if v <= 0.:
+                return img
+
+            v = v * img.size[0]
+
+            return CutoutAbs(img, v)
+
+            # x0 = np.random.uniform(w - v)
+            # y0 = np.random.uniform(h - v)
+            # xy = (x0, y0, x0 + v, y0 + v)
+            # color = (127, 127, 127)
+            # img = img.copy()
+            # PIL.ImageDraw.Draw(img).rectangle(xy, color)
+            # return img
+
+
+        def CutoutAbs(img, v):  # [0, 60] => percentage: [0, 0.2]
+            # assert 0 <= v <= 20
+            if v < 0:
+                return img
+            w, h = img.size
+            x0 = np.random.uniform(w)
+            y0 = np.random.uniform(h)
+
+            x0 = int(max(0, x0 - v / 2.))
+            y0 = int(max(0, y0 - v / 2.))
+            x1 = min(w, x0 + v)
+            y1 = min(h, y0 + v)
+
+            xy = (x0, y0, x1, y1)
+            color = (125, 123, 114)
+            # color = (0, 0, 0)
+            img = img.copy()
+            ImageDraw.Draw(img).rectangle(xy, color)
+            return img
+
+        # from https://stackoverflow.com/questions/5252170/specify-image-filling-color-when-rotating-in-python-with-pil-and-setting-expand
+        def rotate_with_fill(img, magnitude):
+            rot = img.convert("RGBA").rotate(magnitude)
+            return Image.composite(rot, Image.new("RGBA", rot.size, (128,) * 4), rot).convert(img.mode)
+
+        func = {
+            "shearX": lambda img, magnitude: img.transform(
+                img.size, Image.AFFINE, (1, magnitude * random.choice([-1, 1]), 0, 0, 1, 0),
+                Image.BICUBIC, fillcolor=fillcolor),
+            "shearY": lambda img, magnitude: img.transform(
+                img.size, Image.AFFINE, (1, 0, 0, magnitude * random.choice([-1, 1]), 1, 0),
+                Image.BICUBIC, fillcolor=fillcolor),
+            "translateX": lambda img, magnitude: img.transform(
+                img.size, Image.AFFINE, (1, 0, magnitude * img.size[0] * random.choice([-1, 1]), 0, 1, 0),
+                fillcolor=fillcolor),
+            "translateY": lambda img, magnitude: img.transform(
+                img.size, Image.AFFINE, (1, 0, 0, 0, 1, magnitude * img.size[1] * random.choice([-1, 1])),
+                fillcolor=fillcolor),
+            "cutout": lambda img, magnitude: Cutout(img, magnitude),
+            "rotate": lambda img, magnitude: rotate_with_fill(img, magnitude),
+            # "rotate": lambda img, magnitude: img.rotate(magnitude * random.choice([-1, 1])),
+            "color": lambda img, magnitude: ImageEnhance.Color(img).enhance(1 + magnitude * random.choice([-1, 1])),
+            "posterize": lambda img, magnitude: ImageOps.posterize(img, magnitude),
+            "solarize": lambda img, magnitude: ImageOps.solarize(img, magnitude),
+            "contrast": lambda img, magnitude: ImageEnhance.Contrast(img).enhance(
+                1 + magnitude * random.choice([-1, 1])),
+            "sharpness": lambda img, magnitude: ImageEnhance.Sharpness(img).enhance(
+                1 + magnitude * random.choice([-1, 1])),
+            "brightness": lambda img, magnitude: ImageEnhance.Brightness(img).enhance(
+                1 + magnitude * random.choice([-1, 1])),
+            "autocontrast": lambda img, magnitude: ImageOps.autocontrast(img),
+            "equalize": lambda img, magnitude: ImageOps.equalize(img),
+            "invert": lambda img, magnitude: ImageOps.invert(img)
+        }
+
+        # self.name = "{}_{:.2f}_and_{}_{:.2f}".format(
+        #     operation1, ranges[operation1][magnitude_idx1],
+        #     operation2, ranges[operation2][magnitude_idx2])
+        self.p1 = p1
+        self.operation1 = func[operation1]
+        self.magnitude1 = ranges[operation1][magnitude_idx1]
+        self.p2 = p2
+        self.operation2 = func[operation2]
+        self.magnitude2 = ranges[operation2][magnitude_idx2]
+
+
+    def __call__(self, img):
+        if random.random() < self.p1: img = self.operation1(img, self.magnitude1)
+        if random.random() < self.p2: img = self.operation2(img, self.magnitude2)
+        return img
+
+File Path: utils/cifar10.py
+Content:
+# Modified from https://github.com/hbzju/PiCO/blob/main/utils/cifar10.py
+
+import os.path
+import pickle
+from typing import Any, Callable, Optional, Tuple
+import numpy as np
+from PIL import Image
+
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+import torchvision.datasets as dsets
+from collections import OrderedDict
+
+from .wide_resnet import WideResNet
+from .utils_algo import generate_uniform_cv_candidate_labels, generate_instancedependent_candidate_labels
+from .cutout import Cutout
+from .autoaugment import CIFAR10Policy, ImageNetPolicy
+
+
+def load_cifar10(args):
+    
+    test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
+    ])
+    
+    original_train = dsets.CIFAR10(root=args.data_dir, train=True, download=True, transform=transforms.ToTensor())
+    ori_data, ori_labels = original_train.data, torch.Tensor(original_train.targets).long()
+    
+    test_dataset = dsets.CIFAR10(root=args.data_dir, train=False, transform=test_transform)
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=args.batch_size*4, shuffle=False, num_workers=args.workers, \
+                                              sampler=torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False))
+    
+    if args.exp_type == 'rand':
+        partialY_matrix = generate_uniform_cv_candidate_labels(args, ori_labels)
+    elif args.exp_type == 'ins':
+        ori_data = torch.Tensor(original_train.data)
+        model = WideResNet(depth=28, num_classes=10, widen_factor=10, dropRate=0.3)
+        model.load_state_dict(torch.load('./pmodel/cifar10.pt'))
+        ori_data = ori_data.permute(0, 3, 1, 2)
+        partialY_matrix = generate_instancedependent_candidate_labels(model, ori_data, ori_labels)
+        ori_data = original_train.data
+        
+    temp = torch.zeros(partialY_matrix.shape)
+    temp[torch.arange(partialY_matrix.shape[0]), ori_labels] = 1
+    
+    if torch.sum(partialY_matrix * temp) == partialY_matrix.shape[0]:
+        print('Partial labels correctly loaded !')
+    else:
+        print('Inconsistent permutation !')
+
+    print('Average candidate num: ', partialY_matrix.sum(1).mean())
+    
+    partial_training_dataset = CIFAR10_Partialize(ori_data, partialY_matrix.float(), ori_labels.float())
+    
+    train_sampler = torch.utils.data.distributed.DistributedSampler(partial_training_dataset)
+    
+    partial_training_dataloader = torch.utils.data.DataLoader(
+        dataset=partial_training_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=(train_sampler is None), 
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=train_sampler,
+        drop_last=True
+    )
+    
+    return partial_training_dataloader, partialY_matrix, train_sampler, test_loader
+
+
+class CIFAR10_Partialize(Dataset):
+    def __init__(self, images, given_partial_label_matrix, true_labels):
+        
+        self.ori_images = images
+        self.given_partial_label_matrix = given_partial_label_matrix
+        self.true_labels = true_labels
+        
+        self.transform1 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4, padding_mode='reflect'),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
+        ])
+        
+        self.transform2 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4, padding_mode='reflect'),
+            CIFAR10Policy(),
+            transforms.ToTensor(),
+            Cutout(n_holes=1, length=16),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
+        ])
+
+    def __len__(self):
+        return len(self.true_labels)
+        
+    def __getitem__(self, index):
+        
+        each_image1 = self.transform1(self.ori_images[index])
+        each_image2 = self.transform2(self.ori_images[index])
+        each_label = self.given_partial_label_matrix[index]
+        each_true_label = self.true_labels[index]
+        
+        return each_image1, each_image2, each_label, each_true_label, index
+
+
+File Path: utils/cifar100.py
+Content:
+# Modified from https://github.com/hbzju/PiCO/blob/main/utils/cifar100.py
+
+import os.path
+import pickle
+from typing import Any, Callable, Optional, Tuple
+import numpy as np
+from PIL import Image
+
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+import torchvision.datasets as dsets
+
+from .wide_resnet import WideResNet
+from .utils_algo import generate_uniform_cv_candidate_labels, generate_hierarchical_cv_candidate_labels,\
+                        generate_instancedependent_candidate_labels
+from .cutout import Cutout
+from .autoaugment import CIFAR10Policy, ImageNetPolicy
+
+
+def load_cifar100(args):
+    
+    test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5070751592371323, 0.48654887331495095, 0.4409178433670343], \
+                                  std=[0.2673342858792401, 0.2564384629170883, 0.27615047132568404])
+    ])
+
+    original_train = dsets.CIFAR100(root=args.data_dir, train=True, download=True)
+    ori_data, ori_labels = original_train.data, torch.Tensor(original_train.targets).long()
+
+    test_dataset = dsets.CIFAR100(root=args.data_dir, train=False, transform=test_transform)
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=args.batch_size*4, shuffle=False, \
+                                              num_workers=args.workers, \
+                                              sampler=torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False))
+    
+    if args.hierarchical:
+        partialY_matrix = generate_hierarchical_cv_candidate_labels('cifar100', ori_labels, args)
+    else:
+        if args.exp_type == 'rand':
+            partialY_matrix = generate_uniform_cv_candidate_labels(args, ori_labels)
+        elif args.exp_type == 'ins':
+            ori_data = torch.Tensor(original_train.data)
+            model = WideResNet(depth=28, num_classes=100, widen_factor=10, dropRate=0.3)
+            model.load_state_dict(torch.load('./pmodel/cifar100.pt'))
+            ori_data = ori_data.permute(0, 3, 1, 2)
+            partialY_matrix = generate_instancedependent_candidate_labels(model, ori_data, ori_labels)
+            ori_data = original_train.data
+            
+    temp = torch.zeros(partialY_matrix.shape)
+    temp[torch.arange(partialY_matrix.shape[0]), ori_labels] = 1
+    
+    if torch.sum(partialY_matrix * temp) == partialY_matrix.shape[0]:
+        print('Partial labels correctly loaded !')
+    else:
+        print('Inconsistent permutation !')
+    
+    print('Average candidate num: ', partialY_matrix.sum(1).mean())
+    
+    partial_training_dataset = CIFAR100_Partialize(ori_data, partialY_matrix.float(), ori_labels.float())
+    
+    train_sampler = torch.utils.data.distributed.DistributedSampler(partial_training_dataset)
+    
+    partial_training_dataloader = torch.utils.data.DataLoader(
+        dataset=partial_training_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=(train_sampler is None), 
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=train_sampler,
+        drop_last=True
+    )
+    
+    return partial_training_dataloader, partialY_matrix, train_sampler, test_loader
+
+
+
+class CIFAR100_Partialize(Dataset):
+    def __init__(self, images, given_partial_label_matrix, true_labels):
+        
+        self.ori_images = images
+        self.given_partial_label_matrix = given_partial_label_matrix
+        self.true_labels = true_labels
+        
+        self.transform1 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4, padding_mode='reflect'),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5070751592371323, 0.48654887331495095, 0.4409178433670343], \
+                                  std=[0.2673342858792401, 0.2564384629170883, 0.27615047132568404])
+        ])
+
+        self.transform2 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4, padding_mode='reflect'),
+            CIFAR10Policy(),
+            transforms.ToTensor(),
+            Cutout(n_holes=1, length=16),
+            transforms.Normalize(mean=[0.5070751592371323, 0.48654887331495095, 0.4409178433670343], \
+                                  std=[0.2673342858792401, 0.2564384629170883, 0.27615047132568404])
+        ])
+        
+
+    def __len__(self):
+        return len(self.true_labels)
+        
+    def __getitem__(self, index):
+        
+        each_image1 = self.transform1(self.ori_images[index])
+        each_image2 = self.transform2(self.ori_images[index])
+        each_label = self.given_partial_label_matrix[index]
+        each_true_label = self.true_labels[index]
+        
+        return each_image1, each_image2, each_label, each_true_label, index
+
+
+File Path: utils/cutout.py
+Content:
+# https://github.com/uoguelph-mlrg/Cutout/blob/master/util/cutout.py
+
+import numpy as np
+
+import torch
+
+
+class Cutout(object):
+    """Randomly mask out one or more patches from an image.
+    Args:
+        n_holes (int): Number of patches to cut out of each image.
+        length (int): The length (in pixels) of each square patch.
+    """
+    def __init__(self, n_holes, length):
+        self.n_holes = n_holes
+        self.length = length
+
+    def __call__(self, img):
+        """
+        Args:
+            img (Tensor): Tensor image of size (C, H, W).
+        Returns:
+            Tensor: Image with n_holes of dimension length x length cut out of it.
+        """
+        h = img.size(1)
+        w = img.size(2)
+
+        mask = np.ones((h, w), np.float32)
+
+        for n in range(self.n_holes):
+            y = np.random.randint(h)
+            x = np.random.randint(w)
+
+            y1 = np.clip(y - self.length // 2, 0, h)
+            y2 = np.clip(y + self.length // 2, 0, h)
+            x1 = np.clip(x - self.length // 2, 0, w)
+            x2 = np.clip(x + self.length // 2, 0, w)
+
+            mask[y1: y2, x1: x2] = 0.
+
+        mask = torch.from_numpy(mask)
+        mask = mask.expand_as(img)
+        img = img * mask
+
+        return img
+
+File Path: utils/fmnist.py
+Content:
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+import torchvision.datasets as dsets
+from collections import OrderedDict
+
+from .utils_mlp import mlp_partialize
+from .utils_algo import generate_uniform_cv_candidate_labels, generate_instancedependent_candidate_labels
+from .cutout import Cutout
+from .autoaugment import CIFAR10Policy, ImageNetPolicy
+
+
+def load_fmnist(args):
+    
+    test_transform = transforms.Compose([
+        transforms.Grayscale(3),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307, 0.1307, 0.1307), (0.3081, 0.3081, 0.3081))
+    ])
+    
+    original_train = dsets.FashionMNIST(root=args.data_dir, train=True, download=True, transform=transforms.ToTensor())
+    ori_data, ori_labels = original_train.data, original_train.targets.long()
+    
+    test_dataset = dsets.FashionMNIST(root=args.data_dir, train=False, download=True, transform=test_transform)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_dataset, batch_size=args.batch_size*4, \
+        shuffle=False, num_workers=args.workers, \
+        sampler=torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
+    )
+    
+    if args.exp_type == 'rand':
+        partialY_matrix = generate_uniform_cv_candidate_labels(args, ori_labels)
+    elif args.exp_type == 'ins':  
+        num_features = 28 * 28
+        ori_data = ori_data.view((ori_data.shape[0], -1)).float()
+        partialize_net = mlp_partialize(n_inputs=num_features, n_outputs=args.num_class)
+        partialize_net.load_state_dict(torch.load('./pmodel/fmnist.pt'))
+        partialY_matrix = generate_instancedependent_candidate_labels(partialize_net, ori_data, ori_labels)
+        ori_data = original_train.data
+        
+    
+    temp = torch.zeros(partialY_matrix.shape)
+    temp[torch.arange(partialY_matrix.shape[0]), ori_labels] = 1
+    
+    if torch.sum(partialY_matrix * temp) == partialY_matrix.shape[0]:
+        print('Partial labels correctly loaded !')
+    else:
+        print('Inconsistent permutation !')
+
+    print('Average candidate num: ', partialY_matrix.sum(1).mean())
+    
+    partial_training_dataset = FMNIST_Partialize(ori_data, partialY_matrix.float(), ori_labels.float())
+    
+    train_sampler = torch.utils.data.distributed.DistributedSampler(partial_training_dataset)
+    
+    partial_training_dataloader = torch.utils.data.DataLoader(
+        dataset=partial_training_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=(train_sampler is None), 
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=train_sampler,
+        drop_last=True
+    )
+    
+    return partial_training_dataloader, partialY_matrix, train_sampler, test_loader
+
+
+class FMNIST_Partialize(Dataset):
+    def __init__(self, images, given_partial_label_matrix, true_labels):
+        
+        self.ori_images = images
+        self.given_partial_label_matrix = given_partial_label_matrix
+        self.true_labels = true_labels
+        
+        self.transform1 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(28, 4, padding_mode='reflect'),
+            transforms.Grayscale(3), # 3
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307, 0.1307, 0.1307), (0.3081, 0.3081, 0.3081))
+        ])
+        
+        self.transform2 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(28, 4, padding_mode='reflect'),
+            transforms.ToTensor(),
+            Cutout(n_holes=1, length=16),
+            transforms.ToPILImage(),
+            transforms.Grayscale(3),
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307, 0.1307, 0.1307), (0.3081, 0.3081, 0.3081))
+        ])
+
+    def __len__(self):
+        return len(self.true_labels)
+        
+    def __getitem__(self, index):
+        
+        each_image1 = self.transform1(self.ori_images[index])
+        each_image2 = self.transform2(self.ori_images[index])
+        each_label = self.given_partial_label_matrix[index]
+        each_true_label = self.true_labels[index]
+        
+        return each_image1, each_image2, each_label, each_true_label, index
+
+
+File Path: utils/miniImagenet.py
+Content:
+# Modified from https://github.com/WZMIAOMIAO/deep-learning-for-image-processing
+
+import os
+import os.path
+import sys
+import numpy as np
+from PIL import Image
+
+import torch
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as transforms
+import torchvision.datasets as dsets
+from collections import OrderedDict
+
+from .wide_resnet import WideResNet
+from .utils_algo import generate_uniform_cv_candidate_labels, generate_instancedependent_candidate_labels
+from .cutout import Cutout
+from .autoaugment import CIFAR10Policy, ImageNetPolicy
+
+
+def load_miniImagenet(args):
+    
+    test_transform = transforms.Compose([
+        transforms.CenterCrop(224),
+        transforms.Resize(64),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    original_train = miniImagenet(root=args.data_dir, train=True, transform=transforms.ToTensor())
+    ori_data, ori_labels = original_train.data, torch.Tensor(original_train.targets).long()
+    
+    test_dataset = miniImagenet(root=args.data_dir, train=False, transform=test_transform)
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=args.batch_size*4, shuffle=False, \
+    num_workers=args.workers, sampler=torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False))
+    
+    
+    if args.exp_type == 'rand':
+        partialY_matrix = generate_uniform_cv_candidate_labels(args, ori_labels)
+    elif args.exp_type == 'ins':
+        raise NotImplementedError("You have chosen an unsupported experiment type. Please check and try again.")
+        
+    temp = torch.zeros(partialY_matrix.shape)
+    temp[torch.arange(partialY_matrix.shape[0]), ori_labels] = 1
+    
+    if torch.sum(partialY_matrix * temp) == partialY_matrix.shape[0]:
+        print('Partial labels correctly loaded !')
+    else:
+        print('Inconsistent permutation !')
+
+    print('Average candidate num: ', partialY_matrix.sum(1).mean())
+    
+    partial_training_dataset = miniImagenet_Partialize(ori_data, partialY_matrix.float(), ori_labels.float())
+    
+    train_sampler = torch.utils.data.distributed.DistributedSampler(partial_training_dataset)
+    
+    partial_training_dataloader = torch.utils.data.DataLoader(
+        dataset=partial_training_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=(train_sampler is None), 
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=train_sampler,
+        drop_last=True
+    )
+    
+    return partial_training_dataloader, partialY_matrix, train_sampler, test_loader
+
+
+class miniImagenet_Partialize(Dataset):
+    def __init__(self, images, given_partial_label_matrix, true_labels):
+        
+        self.ori_images = images
+        self.given_partial_label_matrix = given_partial_label_matrix
+        self.true_labels = true_labels
+        
+        self.transform1 = transforms.Compose([
+            transforms.RandomResizedCrop(64),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        
+        self.transform2 = transforms.Compose([
+            transforms.RandomResizedCrop(64),
+            transforms.RandomHorizontalFlip(),
+            ImageNetPolicy(),
+            transforms.ToTensor(),
+            Cutout(n_holes=1, length=32),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
+    def __len__(self):
+        return len(self.true_labels)
+        
+    def __getitem__(self, index):
+        
+        each_image1 = self.transform1(self.ori_images[index])
+        each_image2 = self.transform2(self.ori_images[index])
+        each_label = self.given_partial_label_matrix[index]
+        each_true_label = self.true_labels[index]
+        
+        return each_image1, each_image2, each_label, each_true_label, index
+
+
+
+class miniImagenet(Dataset):
+    def __init__(self, root, train=True, transform=None):
+        self.Train = train
+        self.root_dir = root
+        self.transform = transform
+        self.train_dir = os.path.join(self.root_dir, "train")
+        self.test_dir = os.path.join(self.root_dir, "test")
+
+        if (self.Train):
+            self.train_transform = transforms.Compose([
+                transforms.CenterCrop(224),
+                transforms.Resize(84)
+            ])
+            self._create_class_idx_dict_train()
+        else:
+            self._create_class_idx_dict_test()
+        
+        
+        self._make_dataset(Train = self.Train)
+        
+
+    def _create_class_idx_dict_train(self):
+        if sys.version_info >= (3, 5):
+            classes = [d.name for d in os.scandir(self.train_dir) if d.is_dir()]
+        else:
+            classes = [d for d in os.listdir(self.train_dir) if os.path.isdir(os.path.join(self.train_dir, d))]
+        
+        classes = sorted(classes)
+        num_images = 0
+        for root, dirs, files in os.walk(self.train_dir):
+            for f in files:
+                if f.endswith(".jpg"):
+                    num_images = num_images + 1
+
+        self.len_dataset = num_images
+
+        self.tgt_idx_to_class = {i: classes[i] for i in range(len(classes))}
+        self.class_to_tgt_idx = {classes[i]: i for i in range(len(classes))}
+
+    
+    def _create_class_idx_dict_test(self):
+        if sys.version_info >= (3, 5):
+            classes = [d.name for d in os.scandir(self.test_dir) if d.is_dir()]
+        else:
+            classes = [d for d in os.listdir(self.test_dir) if os.path.isdir(os.path.join(self.test_dir, d))]
+        
+        classes = sorted(classes)
+        num_images = 0
+        for root, dirs, files in os.walk(self.test_dir):
+            for f in files:
+                if f.endswith(".jpg"):
+                    num_images = num_images + 1
+
+        self.len_dataset = num_images
+
+        self.tgt_idx_to_class = {i: classes[i] for i in range(len(classes))}
+        self.class_to_tgt_idx = {classes[i]: i for i in range(len(classes))}
+
+        
+    def _make_dataset(self, Train=True):
+
+        self.data = []
+        self.targets = []
+        
+            
+        if Train:
+            img_root_dir = self.train_dir
+            list_of_dirs = [target for target in self.class_to_tgt_idx.keys()]
+        else:
+            img_root_dir = self.test_dir
+            list_of_dirs = [target for target in self.class_to_tgt_idx.keys()]
+        
+        for tgt in list_of_dirs:
+            dirs = os.path.join(img_root_dir, tgt)
+            
+            if not os.path.isdir(dirs):
+                continue
+            
+            for root, _, files in sorted(os.walk(dirs)):
+                
+                for fname in sorted(files):
+                    if (fname.endswith(".jpg")):
+                        path = os.path.join(root, fname)
+                        
+                        if Train:
+                            class_index = self.class_to_tgt_idx[tgt]
+                            item = (path, self.class_to_tgt_idx[tgt])
+                        else:
+                            class_index = self.class_to_tgt_idx[tgt]
+                            item = (path, self.class_to_tgt_idx[tgt])
+                       
+                        # add
+                        sample = Image.open(path)
+                        sample = sample.convert('RGB')
+                        
+                        if Train:
+                            sample = self.train_transform(sample)
+
+                        self.data.append(sample)
+                        self.targets.append(class_index)
+                        
+                
+    def __len__(self):
+        return self.len_dataset
+
+    
+    def __getitem__(self, idx):
+        sample, tgt = self.data[idx], self.targets[idx]
+
+        if self.transform is not None:
+            sample = self.transform(sample)
+
+        return sample, tgt
+
+File Path: utils/model.py
+Content:
+import numpy as np
+from random import sample
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class PaPi(nn.Module):
+    def __init__(self, args, base_encoder):
+        super().__init__()
+
+        pretrained = False
+        
+        self.proto_weight = args.proto_m
+
+        self.encoder = base_encoder(name=args.arch, head='mlp', feat_dim=args.low_dim, num_class=args.num_class, pretrained=pretrained)
+
+        self.register_buffer("prototypes", torch.zeros(args.num_class, args.low_dim))
+    
+    
+    def set_prototype_update_weight(self, epoch, args):
+        start = args.pro_weight_range[0]
+        end = args.pro_weight_range[1]
+        self.proto_weight = 1. * epoch / args.epochs * (end - start) + start
+
+
+    def forward(self, img_q, img_k=None, img_q_mix=None, img_k_mix=None, partial_Y=None, Y_true=None, args=None, eval_only=False):
+        
+        output_q, q = self.encoder(img_q)
+        
+        if eval_only:
+            prototypes_eval = self.prototypes.clone().detach()
+            logits_prot_test = torch.mm(q, prototypes_eval.t())
+            return output_q, logits_prot_test
+        
+        output_k, k = self.encoder(img_k)
+
+        output_q_mix, q_mix = self.encoder(img_q_mix)
+        output_k_mix, k_mix = self.encoder(img_k_mix)
+
+        predicetd_scores_q = torch.softmax(output_q, dim=1) * partial_Y
+        predicetd_scores_q_norm = predicetd_scores_q / predicetd_scores_q.sum(dim = 1).repeat(args.num_class, 1).transpose(0, 1)
+        
+        predicetd_scores_k = torch.softmax(output_k, dim=1) * partial_Y
+        predicetd_scores_k_norm = predicetd_scores_k / predicetd_scores_k.sum(dim = 1).repeat(args.num_class, 1).transpose(0, 1)
+        
+        max_scores_q, pseudo_labels_q = torch.max(predicetd_scores_q_norm, dim=1)
+        max_scores_k, pseudo_labels_k = torch.max(predicetd_scores_k_norm, dim=1)
+        
+        prototypes = self.prototypes.clone().detach()
+        
+        logits_prot_q = torch.mm(q, prototypes.t())
+        logits_prot_k = torch.mm(k, prototypes.t())
+
+        logits_prot_q_mix = torch.mm(q_mix, prototypes.t())
+        logits_prot_k_mix = torch.mm(k_mix, prototypes.t())
+
+        for feat_q, label_q in zip(concat_all_gather(q), concat_all_gather(pseudo_labels_q)):
+            self.prototypes[label_q] = self.proto_weight * self.prototypes[label_q] + (1 - self.proto_weight) * feat_q
+        
+        for feat_k, label_k in zip(concat_all_gather(k), concat_all_gather(pseudo_labels_k)):
+            self.prototypes[label_k] = self.proto_weight * self.prototypes[label_k] + (1 - self.proto_weight) * feat_k
+            
+            
+        self.prototypes = F.normalize(self.prototypes, p=2, dim=1)
+        
+        return output_q, output_k, logits_prot_q, logits_prot_k, logits_prot_q_mix, logits_prot_k_mix
+
+
+
+# From https://github.com/hbzju/PiCO/blob/main/model.py
+@torch.no_grad()
+def concat_all_gather(tensor):
+    """
+    Performs all_gather operation on the provided tensors.
+    *** Warning ***: torch.distributed.all_gather has no gradient.
+    """
+    tensors_gather = [torch.ones_like(tensor)
+        for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+    
+    output = torch.cat(tensors_gather, dim=0)
+    
+    return output
+
+
+@torch.no_grad()
+def get_entropy(logits):
+    probs = F.softmax(logits, dim=1)
+    log_probs = torch.log(probs + 1e-7) # avoid NaN
+    return -(probs*log_probs).sum(1)
+
+File Path: utils/resnet.py
+Content:
+# Modified from https://github.com/hbzju/PiCO/blob/main/resnet.py
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import models
+
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1, is_last=False):
+        super(BasicBlock, self).__init__()
+        self.is_last = is_last
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        preact = out
+        out = F.relu(out)
+        if self.is_last:
+            return out, preact
+        else:
+            return out
+
+
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, in_planes, planes, stride=1, is_last=False):
+        super(Bottleneck, self).__init__()
+        self.is_last = is_last
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = nn.Conv2d(planes, self.expansion * planes, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(self.expansion * planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = F.relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+        out += self.shortcut(x)
+        preact = out
+        out = F.relu(out)
+        if self.is_last:
+            return out, preact
+        else:
+            return out
+
+
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, in_channel=3, zero_init_residual=False):
+        super(ResNet, self).__init__()
+        self.in_planes = 64
+
+        self.conv1 = nn.Conv2d(in_channel, 64, kernel_size=3, stride=1, padding=1,
+                               bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves
+        # like an identity. This improves the model by 0.2~0.3% according to:
+        # https://arxiv.org/abs/1706.02677
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for i in range(num_blocks):
+            stride = strides[i]
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x, layer=100):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = torch.flatten(out, 1)
+        return out
+
+
+def resnet18(**kwargs):
+    return ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+
+
+def resnet34(**kwargs):
+    return ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
+
+
+def resnet50(**kwargs):
+    return ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+
+
+def resnet101(**kwargs):
+    return ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
+
+
+model_dict = {
+    'resnet18': [resnet18, 512],
+    'resnet34': [resnet34, 512],
+    'resnet50': [resnet50, 2048],
+    'resnet101': [resnet101, 2048],
+}
+
+
+class LinearBatchNorm(nn.Module):
+    """Implements BatchNorm1d by BatchNorm2d, for SyncBN purpose"""
+    def __init__(self, dim, affine=True):
+        super(LinearBatchNorm, self).__init__()
+        self.dim = dim
+        self.bn = nn.BatchNorm2d(dim, affine=affine)
+
+    def forward(self, x):
+        x = x.view(-1, self.dim, 1, 1)
+        x = self.bn(x)
+        x = x.view(-1, self.dim)
+        return x
+
+
+class Identity(nn.Module):
+    def __init__(self):
+        super(Identity, self).__init__()
+        
+    def forward(self, x):
+        return x
+
+
+class PaPiNet(nn.Module):
+    def __init__(self, name='resnet18', head='mlp', feat_dim=128, num_class=10, pretrained=False):
+        super(PaPiNet, self).__init__()
+        model_fun, dim_in = model_dict[name]
+        if pretrained:
+            model = models.resnet18(pretrained=True)
+            model.fc = Identity()
+            self.encoder = model
+        else:
+            self.encoder = model_fun()
+
+        self.fc = nn.Linear(dim_in, num_class)
+        if head == 'linear':
+            self.head = nn.Linear(dim_in, feat_dim)
+        elif head == 'mlp':
+            self.head = nn.Sequential(
+                nn.Linear(dim_in, dim_in),
+                nn.ReLU(inplace=True),
+                nn.Linear(dim_in, feat_dim)
+            )
+        else:
+            raise NotImplementedError(
+                'head not supported: {}'.format(head))
+
+    def forward(self, x):
+        feat = self.encoder(x)
+        feat_c = self.head(feat)
+        logits = self.fc(feat)
+        return logits, F.normalize(feat_c, dim=1)
+
+
+
+File Path: utils/svhn.py
+Content:
+import numpy as np
+from PIL import Image
+
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+import torchvision.datasets as dsets
+
+from .wide_resnet import WideResNet
+from .utils_algo import generate_uniform_cv_candidate_labels, generate_instancedependent_candidate_labels
+from .cutout import Cutout
+from .autoaugment import SVHNPolicy
+
+
+def load_svhn(args):
+    test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
+    
+    original_train = dsets.SVHN(root=args.data_dir, split='train', transform=transforms.ToTensor(), download=True)
+    ori_data, ori_labels = original_train.data, torch.Tensor(original_train.labels).long()
+    
+    test_dataset = dsets.SVHN(root=args.data_dir, split='test', transform=test_transform, download=True)
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=args.batch_size*4, shuffle=False, num_workers=args.workers, \
+                                              sampler=torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False))
+    
+    if args.exp_type == 'rand':
+        partialY_matrix = generate_uniform_cv_candidate_labels(args, ori_labels)
+    elif args.exp_type == 'ins':
+        ori_data = torch.Tensor(original_train.data)
+        model = WideResNet(depth=16, num_classes=10, widen_factor=8, dropRate=0.4)
+        model.load_state_dict(torch.load('./pmodel/svhn.pt'))
+        partialY_matrix = generate_instancedependent_candidate_labels(model, ori_data, ori_labels)
+        ori_data = original_train.data
+        
+    temp = torch.zeros(partialY_matrix.shape)
+    temp[torch.arange(partialY_matrix.shape[0]), ori_labels] = 1
+    
+    if torch.sum(partialY_matrix * temp) == partialY_matrix.shape[0]:
+        print('Partial labels correctly loaded !')
+    else:
+        print('Inconsistent permutation !')
+        
+    print('Average candidate num: ', partialY_matrix.sum(1).mean())
+    
+    partial_training_dataset = SVHN_Partialize(ori_data, partialY_matrix.float(), ori_labels.float())
+    
+    train_sampler = torch.utils.data.distributed.DistributedSampler(partial_training_dataset)
+    
+    partial_training_dataloader = torch.utils.data.DataLoader(
+        dataset=partial_training_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=(train_sampler is None), 
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=train_sampler,
+        drop_last=True
+    )
+    
+    return partial_training_dataloader, partialY_matrix, train_sampler, test_loader
+
+
+class SVHN_Partialize(Dataset):
+    def __init__(self, images, given_partial_label_matrix, true_labels):
+        
+        self.ori_images = images
+        self.given_partial_label_matrix = given_partial_label_matrix
+        self.true_labels = true_labels
+        
+        self.transform1 = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+        
+        self.transform2 = transforms.Compose([
+            transforms.ToPILImage(),
+            SVHNPolicy(),
+            transforms.ToTensor(),
+            Cutout(n_holes=1, length=20),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+    
+    def __len__(self):
+        return len(self.true_labels)
+        
+    def __getitem__(self, index):
+        
+        img = self.ori_images[index]
+        img = np.transpose(img, (1, 2, 0))
+        
+        each_image1 = self.transform1(img)
+        each_image2 = self.transform2(img)
+        each_label = self.given_partial_label_matrix[index]
+        each_true_label = self.true_labels[index]
+        
+        return each_image1, each_image2, each_label, each_true_label, index
+
+    
+File Path: utils/utils_algo.py
+Content:
+# https://github.com/hbzju/PiCO/blob/main/utils/utils_algo.py
+
+import math
+import pickle
+import numpy as np
+import copy
+from scipy.special import comb
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+
+def generate_instancedependent_candidate_labels(model, train_X, train_Y):
+    with torch.no_grad():
+
+        k = int(torch.max(train_Y) - torch.min(train_Y) + 1)
+        n = train_Y.shape[0]
+        
+        model = model.cuda()
+        
+        train_Y = torch.nn.functional.one_hot(train_Y, num_classes=k)
+        
+        avg_C = 0
+        partialY_list = []
+        
+        rate, batch_size = 0.4, 2000
+        
+        step = math.ceil(n / batch_size)
+        
+        print('Instance dependent partializing...')
+        
+        for i in range(0, step):
+            
+            b_end = min((i + 1) * batch_size, n)
+    
+            train_X_part = train_X[i * batch_size : b_end].cuda()
+        
+            outputs = model(train_X_part)
+            
+            train_p_Y = train_Y[i * batch_size : b_end].clone().detach()
+
+            partial_rate_array = F.softmax(outputs, dim=1).clone().detach()
+            partial_rate_array[torch.where(train_p_Y == 1)] = 0
+            partial_rate_array = partial_rate_array / torch.max(partial_rate_array, dim=1, keepdim=True)[0]
+            partial_rate_array = partial_rate_array / partial_rate_array.mean(dim=1, keepdim=True) * rate
+            partial_rate_array[partial_rate_array > 1.0] = 1.0
+            
+            m = torch.distributions.binomial.Binomial(total_count=1, probs=partial_rate_array)
+            z = m.sample()
+            
+            train_p_Y[torch.where(z == 1)] = 1.0
+            partialY_list.append(train_p_Y)
+
+        partialY = torch.cat(partialY_list, dim=0).float()
+
+        assert partialY.shape[0] == train_X.shape[0]
+        
+    avg_C = torch.sum(partialY) / partialY.size(0)
+    
+    print('avg_C: ', avg_C)
+    
+    return partialY
+
+
+
+def generate_uniform_cv_candidate_labels(args, train_labels):
+    if torch.min(train_labels) > 1:
+        raise RuntimeError('testError')
+    
+    elif torch.min(train_labels) == 1:
+        train_labels = train_labels - 1
+
+    K = int(torch.max(train_labels) - torch.min(train_labels) + 1)
+    n = train_labels.shape[0]
+
+    partialY = torch.zeros(n, K)
+    partialY[torch.arange(n), train_labels] = 1.0
+    
+    p_1 = args.partial_rate
+    transition_matrix = np.eye(K)
+    transition_matrix[np.where(~np.eye(transition_matrix.shape[0], dtype=bool))] = p_1
+    print('Transition_matrix ==>')
+    print(transition_matrix)
+
+    random_n = np.random.uniform(0, 1, size=(n, K))
+
+    for j in range(n):
+        for jj in range(K):
+            if jj == train_labels[j]:
+                continue
+            if random_n[j, jj] < transition_matrix[train_labels[j], jj]:
+                partialY[j, jj] = 1.0
+
+    print("Finish Generating Uniform Candidate Label Sets!\n")
+    
+    return partialY
+
+
+
+def generate_hierarchical_cv_candidate_labels(dataname, train_labels, args):
+    assert dataname == 'cifar100'
+
+    meta = unpickle('../data/cifar-100-python/meta')
+
+    fine_label_names = [t.decode('utf8') for t in meta[b'fine_label_names']]
+    
+    label2idx = {fine_label_names[i]:i for i in range(100)}
+
+    x = '''aquatic mammals#beaver, dolphin, otter, seal, whale
+fish#aquarium fish, flatfish, ray, shark, trout
+flowers#orchid, poppy, rose, sunflower, tulip
+food containers#bottle, bowl, can, cup, plate
+fruit and vegetables#apple, mushroom, orange, pear, sweet pepper
+household electrical devices#clock, keyboard, lamp, telephone, television
+household furniture#bed, chair, couch, table, wardrobe
+insects#bee, beetle, butterfly, caterpillar, cockroach
+large carnivores#bear, leopard, lion, tiger, wolf
+large man-made outdoor things#bridge, castle, house, road, skyscraper
+large natural outdoor scenes#cloud, forest, mountain, plain, sea
+large omnivores and herbivores#camel, cattle, chimpanzee, elephant, kangaroo
+medium-sized mammals#fox, porcupine, possum, raccoon, skunk
+non-insect invertebrates#crab, lobster, snail, spider, worm
+people#baby, boy, girl, man, woman
+reptiles#crocodile, dinosaur, lizard, snake, turtle
+small mammals#hamster, mouse, rabbit, shrew, squirrel
+trees#maple_tree, oak_tree, palm_tree, pine_tree, willow_tree
+vehicles 1#bicycle, bus, motorcycle, pickup truck, train
+vehicles 2#lawn_mower, rocket, streetcar, tank, tractor'''
+
+    x_split = x.split('\n')
+    
+    hierarchical = {}
+    reverse_hierarchical = {}
+    
+    hierarchical_idx = [None] * 20
+    
+    # superclass to find other sub classes
+    reverse_hierarchical_idx = [None] * 100
+    
+    # class to superclass
+    super_classes = []
+    labels_by_h = []
+    
+    for i in range(len(x_split)):
+        s_split = x_split[i].split('#')
+        super_classes.append(s_split[0])
+        hierarchical[s_split[0]] = s_split[1].split(', ')
+        for lb in s_split[1].split(', '):
+            reverse_hierarchical[lb.replace(' ', '_')] = s_split[0]
+            
+        labels_by_h += s_split[1].split(', ')
+        hierarchical_idx[i] = [label2idx[lb.replace(' ', '_')] for lb in s_split[1].split(', ')]
+        for idx in hierarchical_idx[i]:
+            reverse_hierarchical_idx[idx] = i
+
+    # end generate hierarchical
+    if torch.min(train_labels) > 1:
+        raise RuntimeError('testError')
+    
+    elif torch.min(train_labels) == 1:
+        train_labels = train_labels - 1
+
+    K = int(torch.max(train_labels) - torch.min(train_labels) + 1)
+    n = train_labels.shape[0]
+
+    partialY = torch.zeros(n, K)
+    partialY[torch.arange(n), train_labels] = 1.0
+    
+    p_1 = args.partial_rate
+    transition_matrix = np.eye(K)
+    transition_matrix[np.where(~np.eye(transition_matrix.shape[0], dtype=bool))] = p_1
+    
+    mask = np.zeros_like(transition_matrix)
+    
+    for i in range(len(transition_matrix)):
+        superclass = reverse_hierarchical_idx[i]
+        subclasses = hierarchical_idx[superclass]
+        mask[i, subclasses] = 1
+
+    transition_matrix *= mask
+    print('transition_matrix')
+    print(transition_matrix)
+    print()
+    
+    random_n = np.random.uniform(0, 1, size=(n, K))
+
+    for j in range(n):  # for each instance
+        for jj in range(K): # for each class 
+            if jj == train_labels[j]: # except true class
+                continue
+            if random_n[j, jj] < transition_matrix[train_labels[j], jj]:
+                partialY[j, jj] = 1.0
+    
+    print("Finish Generating Hierarchical Candidate Label Sets!\n")
+    
+    return partialY
+
+
+
+def unpickle(file):
+    with open(file, 'rb') as fo:
+        res = pickle.load(fo, encoding='bytes')
+    return res
+
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self, name, fmt=':f'):
+        self.name = name
+        self.fmt = fmt
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+    def __str__(self):
+        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        return fmtstr.format(**self.__dict__)
+
+
+    
+class ProgressMeter(object):
+    def __init__(self, num_batches, meters, prefix=""):
+        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
+        self.meters = meters
+        self.prefix = prefix
+
+    def display(self, batch):
+        entries = [self.prefix + self.batch_fmtstr.format(batch)]
+        entries += [str(meter) for meter in self.meters]
+        print('\t'.join(entries))
+
+    def _get_batch_fmtstr(self, num_batches):
+        num_digits = len(str(num_batches // 1))
+        fmt = '{:' + str(num_digits) + 'd}'
+        return '[' + fmt + '/' + fmt.format(num_batches) + ']'
+
+    
+
+def adjust_learning_rate(args, optimizer, epoch):
+    lr = args.lr
+    if args.cosine:
+        eta_min = lr * (args.lr_decay_rate ** 3)
+        lr = eta_min + (lr - eta_min) * (
+                1 + math.cos(math.pi * epoch / args.epochs)) / 2
+    else:
+        steps = np.sum(epoch > np.asarray(args.lr_decay_epochs))
+        if steps > 0:
+            lr = lr * (args.lr_decay_rate ** steps)
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+    
+
+def accuracy(output, target, topk=(1,)):
+    """Computes the accuracy over the k top predictions for the specified values of k"""
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        
+        res = []
+        for k in topk:
+            correct_k = correct[:k].reshape((-1, )).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        
+        return res
+    
+
+
+def accuracy_check(loader, model, device):
+    with torch.no_grad():
+        total, num_samples = 0, 0
+        for images, labels in loader:
+            labels, images = labels.to(device), images.to(device)
+            outputs, _ = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += (predicted == labels).sum().item()
+            num_samples += labels.size(0)
+    return total / num_samples
+
+
+
+def sigmoid_rampup(current, rampup_length, exp_coe=5.0):
+    """Exponential rampup from https://arxiv.org/abs/1610.02242"""
+    if rampup_length == 0:
+        return 1.0
+    else:
+        current = np.clip(current, 0.0, rampup_length)
+        phase = 1.0 - current / rampup_length
+        return float(np.exp(-exp_coe * phase * phase))
+
+    
+
+def linear_rampup(current, rampup_length):
+    """Linear rampup"""
+    assert current >= 0 and rampup_length >= 0
+    if current >= rampup_length:
+        return 1.0
+    else:
+        return current / rampup_length
+
+
+    
+def cosine_rampdown(current, rampdown_length):
+    """Cosine rampdown from https://arxiv.org/abs/1608.03983"""
+    assert 0 <= current <= rampdown_length
+    return float(.5 * (np.cos(np.pi * current / rampdown_length) + 1))
+
+
+File Path: utils/utils_loss.py
+Content:
+import torch
+import torch.nn.functional as F
+import torch.nn as nn
+
+
+class PaPiLoss(nn.Module):
+    def __init__(self, predicted_score_cls, pseudo_label_weight = 0.99):
+        super().__init__()
+        self.predicted_score_cls1 = predicted_score_cls
+        self.predicted_score_cls2 = predicted_score_cls
+
+        self.init_predicted_score_cls = predicted_score_cls.detach()
+
+        self.pseudo_label_weight = pseudo_label_weight
+    
+
+    def set_alpha(self, epoch, args):
+        self.alpha = min((epoch / 10) * args.alpha_weight, args.alpha_weight)
+    
+
+    def set_pseudo_label_weight(self, epoch, args):
+        start = args.pseudo_label_weight_range[0]
+        end = args.pseudo_label_weight_range[1]
+        self.pseudo_label_weight = 1. * epoch / args.epochs * (end - start) + start
+
+
+    def update_weight_byclsout1(self, cls_predicted_score, batch_index, batch_partial_Y, args):
+        with torch.no_grad():
+            y_pred_raw_probas = torch.softmax(cls_predicted_score, dim = 1)
+            
+            revisedY_raw = batch_partial_Y.clone()
+            revisedY_raw = revisedY_raw * y_pred_raw_probas
+            revisedY_raw = revisedY_raw / revisedY_raw.sum(dim = 1).repeat(args.num_class, 1).transpose(0, 1)
+            
+            cls_pseudo_label = revisedY_raw.detach()
+            
+            self.predicted_score_cls1[batch_index, :] = self.pseudo_label_weight * self.predicted_score_cls1[batch_index, :] + \
+                                                    (1 - self.pseudo_label_weight) * cls_pseudo_label
+            
+
+    def forward(self, cls_out1, cls_out2, logits_prot1, logits_prot2, logits_prot_1_mix, logits_prot_2_mix, idx_rp, Lambda, index, args, sim_criterion):
+        y_pred_1_probas = torch.softmax(cls_out1, dim = 1)
+        
+        prot_pred_1_mix_probas_log = torch.log_softmax(torch.div(logits_prot_1_mix, args.tau_proto), dim = 1)
+        prot_pred_2_mix_probas_log = torch.log_softmax(torch.div(logits_prot_2_mix, args.tau_proto), dim = 1)
+        
+        soft_positive_label_target1 = self.predicted_score_cls1[index, :].clone().detach()
+        soft_positive_label_target1_rp = self.predicted_score_cls1[index[idx_rp], :].clone().detach()
+        
+
+        cls_loss_all_1 = soft_positive_label_target1 * torch.log(y_pred_1_probas)
+        cls_loss_1 = - ((cls_loss_all_1).sum(dim=1)).mean()
+
+
+        sim_loss_2_1 = Lambda * sim_criterion(prot_pred_1_mix_probas_log, soft_positive_label_target1) + \
+                    (1 - Lambda) * sim_criterion(prot_pred_1_mix_probas_log, soft_positive_label_target1_rp)
+
+        sim_loss_2_2 = Lambda * sim_criterion(prot_pred_2_mix_probas_log, soft_positive_label_target1) + \
+                    (1 - Lambda) * sim_criterion(prot_pred_2_mix_probas_log, soft_positive_label_target1_rp)
+
+        sim_loss_2 = sim_loss_2_1 + sim_loss_2_2
+        
+
+        return cls_loss_1, sim_loss_2, self.alpha
+
+
+File Path: utils/utils_mlp.py
+Content:
+# Modified from https://github.com/palm-ml/valen/blob/master/utils/models.py
+
+import numpy as np
+
+import torch 
+from torch import nn
+import torch.nn.functional as F 
+import torch.nn.init as init
+
+
+class Normalize(nn.Module):
+
+    def __init__(self, power=2):
+        super(Normalize, self).__init__()
+        self.power = power
+
+    def forward(self, x):
+        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
+        out = x.div(norm)
+        return out
+
+
+class mlp_partialize(nn.Module):
+    def __init__(self, n_inputs, n_outputs, parameter_momentum=0.1):
+        super(mlp_partialize, self).__init__()
+
+        self.L1 = nn.Linear(n_inputs, 300, bias=False)
+        init.xavier_uniform_(self.L1.weight)
+        self.bn1 = nn.BatchNorm1d(300, momentum=parameter_momentum)
+        init.ones_(self.bn1.weight)
+
+        self.L2 = nn.Linear(300, 301, bias=False)
+        init.xavier_uniform_(self.L2.weight)
+        self.bn2 = nn.BatchNorm1d(301, momentum=parameter_momentum)
+        init.ones_(self.bn2.weight)
+
+        self.L3 = nn.Linear(301, 302, bias=False)
+        init.xavier_uniform_(self.L3.weight)
+        self.bn3 = nn.BatchNorm1d(302, momentum=parameter_momentum)
+        init.ones_(self.bn3.weight)
+
+        self.L4 = nn.Linear(302, 303, bias=False)
+        init.xavier_uniform_(self.L4.weight)
+        self.bn4 = nn.BatchNorm1d(303, momentum=parameter_momentum)
+        init.ones_(self.bn4.weight)
+
+        self.L5 = nn.Linear(303, n_outputs, bias=True)
+        init.xavier_uniform_(self.L5.weight)
+        init.zeros_(self.L5.bias)
+        
+    def forward(self, x):
+        x = self.L1(x)
+        x = self.bn1(x)
+        x = F.relu(x)
+
+        x = self.L2(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+
+        x = self.L3(x)
+        x = self.bn3(x)
+        x = F.relu(x)
+
+        l = self.L4(x)
+        x = self.bn4(l)
+        x = F.relu(x)
+
+        x = self.L5(x)
+        
+        return x
+
+
+File Path: utils/wide_resnet.py
+Content:
+# From https://github.com/xternalz/WideResNet-pytorch
+
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class BasicBlock(nn.Module):
+    def __init__(self, in_planes, out_planes, stride, dropRate=0.0):
+        super(BasicBlock, self).__init__()
+        self.bn1 = nn.BatchNorm2d(in_planes)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                               padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_planes)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_planes, out_planes, kernel_size=3, stride=1,
+                               padding=1, bias=False)
+        self.droprate = dropRate
+        self.equalInOut = (in_planes == out_planes)
+        self.convShortcut = (not self.equalInOut) and nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride,
+                               padding=0, bias=False) or None
+    
+    def forward(self, x):
+        if not self.equalInOut:
+            x = self.relu1(self.bn1(x))
+        else:
+            out = self.relu1(self.bn1(x))
+        out = self.relu2(self.bn2(self.conv1(out if self.equalInOut else x)))
+        if self.droprate > 0:
+            out = F.dropout(out, p=self.droprate, training=self.training)
+        out = self.conv2(out)
+        return torch.add(x if self.equalInOut else self.convShortcut(x), out)
+
+    
+class NetworkBlock(nn.Module):
+    def __init__(self, nb_layers, in_planes, out_planes, block, stride, dropRate=0.0):
+        super(NetworkBlock, self).__init__()
+        self.layer = self._make_layer(block, in_planes, out_planes, nb_layers, stride, dropRate)
+    
+    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride, dropRate):
+        layers = []
+        for i in range(nb_layers):
+            layers.append(block(i == 0 and in_planes or out_planes, out_planes, i == 0 and stride or 1, dropRate))
+        return nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return self.layer(x)
+
+    
+class WideResNet(nn.Module):
+    def __init__(self, depth, num_classes, widen_factor=1, dropRate=0.0):
+        super(WideResNet, self).__init__()
+        nChannels = [16, 16*widen_factor, 32*widen_factor, 64*widen_factor]
+        assert((depth - 4) % 6 == 0)
+        n = (depth - 4) // 6
+        block = BasicBlock
+        # 1st conv before any network block
+        self.conv1 = nn.Conv2d(3, nChannels[0], kernel_size=3, stride=1,
+                               padding=1, bias=False)
+        # 1st block
+        self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1, dropRate)
+        # 2nd block
+        self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2, dropRate)
+        # 3rd block
+        self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2, dropRate)
+        # global average pooling and classifier
+        self.bn1 = nn.BatchNorm2d(nChannels[3])
+        self.relu = nn.ReLU(inplace=True)
+        self.fc = nn.Linear(nChannels[3], num_classes)
+        self.nChannels = nChannels[3]
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                m.bias.data.zero_()
+                
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.block1(out)
+        out = self.block2(out)
+        out = self.block3(out)
+        out = self.relu(self.bn1(out))
+
+        out = F.avg_pool2d(out, 8)
+        out = out.view(-1, self.nChannels)
+        out = self.fc(out)
+        return out
+
+Output:
+{
+    "experimental_code": "import os\nimport math\nimport time\nimport random\nimport shutil\nimport logging\nimport warnings\nimport argparse\nimport builtins\nimport numpy as np\nimport tensorboard_logger as tb_logger\n\nimport torch\nimport torch.nn \nimport torch.optim\nimport torch.utils.data\nimport torch.utils.data.distributed\nimport torch.nn.parallel\nimport torch.backends.cudnn as cudnn\nimport torch.distributed as dist\nimport torch.multiprocessing as mp\n\nfrom utils.model import PaPi\nfrom utils.resnet import *\nfrom utils.utils_algo import *\nfrom utils.utils_loss import PaPiLoss\n\nfrom utils.fmnist import load_fmnist\nfrom utils.svhn import load_svhn\nfrom utils.cifar10 import load_cifar10\nfrom utils.cifar100 import load_cifar100\nfrom utils.miniImagenet import load_miniImagenet\n\n\n\nparser = argparse.ArgumentParser(description='PyTorch implementation of PaPi (Towards Effective Visual Representations for Partial-Label Learning)')\n\nparser.add_argument('--exp-type', default='rand', type=str, choices=['rand', 'ins'], help='Different exp-types')\n\nparser.add_argument('--dataset', default='cifar10', type=str, \n                    choices=['fmnist', 'SVHN', 'cifar10', 'cifar100', 'miniImagenet'],\n                    help='dataset name')\n\nparser.add_argument('--exp-dir', default='./experiment', type=str,\n                    help='experiment directory for saving checkpoints and logs')\n\nparser.add_argument('--pmodel_path', default='./pmodel/cifar10.pt', type=str,\n                    help='pretrained model path for generating instance dependent partial labels')\n\nparser.add_argument('--data-dir', default='./data', type=str)\n\nparser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18', choices=['resnet18'],\n                    help='network architecture (only resnet18 used)')\n\nparser.add_argument('-j', '--workers', default=0, type=int,\n                    help='number of data loading workers (default: 0)')\n\nparser.add_argument('--epochs', default=500, type=int, \n                    help='number of total epochs to run')\n\nparser.add_argument('--start-epoch', default=0, type=int, \n                    help='manual epoch number (useful on restarts)')\n\nparser.add_argument('-b', '--batch-size', default=256, type=int,\n                    help='mini-batch size (default: 256), this is the total '\n                         'batch size of all GPUs on the current node when '\n                         'using Data Parallel or Distributed Data Parallel')\n\nparser.add_argument('--lr', '--learning-rate', default=0.05, type=float,\n                    metavar='LR', help='initial learning rate', dest='lr')\n\nparser.add_argument('-lr_decay_epochs', type=str, default='99,199,299',\n                    help='where to decay lr, can be a list')\n\nparser.add_argument('-lr_decay_rate', type=float, default=0.1,\n                    help='decay rate for learning rate')\n\nparser.add_argument('--cosine', action='store_true', default=False,\n                    help='use cosine lr schedule')\n\nparser.add_argument('--momentum', default=0.9, type=float, metavar='M',\n                    help='momentum of SGD solver')\n\nparser.add_argument('--wd', '--weight_decay', default=1e-4, type=float,\n                    metavar='W', help='weight decay (default: 1e-4)',\n                    dest='weight_decay')\n\nparser.add_argument('--resume', default='', type=str,\n                    help='path to latest checkpoint (default: none)')\n\nparser.add_argument('--world-size', default=-1, type=int,\n                    help='number of nodes for distributed training')\n\nparser.add_argument('--rank', default=-1, type=int,\n                    help='node rank for distributed training')\n\nparser.add_argument('--dist-url', default='tcp://localhost:10001', type=str,\n                    help='url used to set up distributed training')\n\nparser.add_argument('--dist-backend', default='nccl', type=str,\n                    help='distributed backend')\n\nparser.add_argument('--seed', default=None, type=int,\n                    help='seed for initializing training. ')\n\nparser.add_argument('--gpu', default=None, type=int,\n                    help='GPU id to use.')\n\nparser.add_argument('--multiprocessing-distributed', action='store_true',\n                    help='Use multi-processing distributed training to launch '\n                         'N processes per node, which has N GPUs. This is the '\n                         'fastest way to use PyTorch for either single node or '\n                         'multi node data parallel training')\n\nparser.add_argument('--cuda_VISIBLE_DEVICES', default='0', type=str, \\\n                        help='which gpu(s) can be used for distributed training')\n\nparser.add_argument('--num-class', default=10, type=int,\n                    help='number of class')\n\nparser.add_argument('--tau_proto', type=float, default=0.3,\n                    help='temperature for prototype')\n\nparser.add_argument('--alpha_mixup', type=float, default=8.0,\n                    help='alpha for beta distribution')\n\nparser.add_argument('--conf_th', type=float, default=0.5,\n                    help='prototype update threshold')\n\nparser.add_argument('--low-dim', default=128, type=int,\n                    help='embedding dimension')\n\nparser.add_argument('--latent-dim', default=512, type=int,\n                    help='latent embedding dimension')\n\nparser.add_argument('--proto_m', default=0.99, type=float,\n                    help='momentum for computing the momving average of prototypes')\n\nparser.add_argument('--alpha_weight', default=1.0, type=float,\n                    help='contrastive loss weight')\n\nparser.add_argument('--pseudo_label_weight_range', default='0.95, 0.8', type=str,\n                    help='pseudo target updating coefficient')\n\nparser.add_argument('--pro_weight_range', default='0.9, 0.5', type=str,\n                    help='prototype updating coefficient')\n\nparser.add_argument('--partial_rate', default=0.1, type=float, \n                    help='ambiguity level (q)')\n\nparser.add_argument('--hierarchical', action='store_true', \n                    help='for CIFAR100-H training')\n\n\nargs = parser.parse_args()\n\nos.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_VISIBLE_DEVICES\n\ntorch.set_printoptions(precision=2, sci_mode=False)\n\nlogging.basicConfig(format='[%(asctime)s] - %(message)s',\n    datefmt='%Y/%m/%d %H:%M:%S',\n    level=logging.DEBUG,\n    handlers=[\n        logging.FileHandler('./result/result_'+ args.exp_type + '_' + args.dataset + '_bs' + str(args.batch_size) + '_p' \\\n                            + str(args.partial_rate) + '_seed' + str(args.seed) + '_dis_' + args.dist_url[-5:] + '.log'),\n        logging.StreamHandler()\n])\n\n\ndef main():\n\n    args.pseudo_label_weight_range = [float(item) for item in args.pseudo_label_weight_range.split(',')]\n    args.pro_weight_range = [float(item) for item in args.pro_weight_range.split(',')]\n    \n    iterations = args.lr_decay_epochs.split(',')\n    args.lr_decay_epochs = list([])\n    for it in iterations:\n        args.lr_decay_epochs.append(int(it))\n\n    if args.seed is not None:\n        warnings.warn('You have chosen to seed training. This will turn on the CUDNN deterministic setting, which can slow down your training considerably! You may see unexpected behavior when restarting from checkpoints.')\n        print()\n    \n    if args.gpu is not None:\n        warnings.warn('You have chosen a specific GPU. This will completely disable data parallelism.')\n        print()\n    \n    if args.dist_url == \"env://\" and args.world_size == -1:\n        args.world_size = int(os.environ[\"WORLD_SIZE\"])\n\n\n    args.distributed = args.world_size > 1 or args.multiprocessing_distributed\n    \n    \n    model_path = 'exp_{exp}_ds_{ds}_lr_{lr}_ep_{ep}_aw_{aw}_arch_{arch}_pr_{pr}_sd_{seed}_dis_{dis}'.format(\n                                            exp=args.exp_type,\n                                            ds=args.dataset,\n                                            lr=args.lr,\n                                            ep=args.epochs,\n                                            aw=args.alpha_weight,\n                                            arch=args.arch,\n                                            pr=args.partial_rate,\n                                            seed=args.seed,\n                                            dis=args.dist_url[-5:]\n    )\n\n    \n    args.exp_dir = os.path.join(args.exp_dir, model_path)\n    if not os.path.exists(args.exp_dir):\n        os.makedirs(args.exp_dir)\n    \n    logging.info(args)\n    print()\n    \n    ngpus_per_node = torch.cuda.device_count()\n    \n    if args.multiprocessing_distributed:\n        # Since we have ngpus_per_node processes per node, the total world_size\n        # needs to be adjusted accordingly\n        args.world_size = ngpus_per_node * args.world_size\n        # Use torch.multiprocessing.spawn to launch distributed processes: the\n        # main_worker process function\n        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))\n    else:\n        # Simply call main_worker function\n        main_worker(args.gpu, ngpus_per_node, args)\n\n\n        \ndef main_worker(gpu, ngpus_per_node, args):\n    \n    cudnn.benchmark = True\n    \n    args.gpu = gpu\n    \n    if args.seed is not None:\n        random.seed(args.seed)\n        torch.manual_seed(args.seed)\n        np.random.seed(args.seed)\n        cudnn.deterministic = True\n        \n    if args.gpu is not None:\n        print(\"Use GPU: {} for training\\n\".format(args.gpu))\n        \n    # suppress printing if not master\n    if args.multiprocessing_distributed and args.gpu != 0:\n        def print_pass(*args):\n            pass\n        builtins.print = print_pass\n    \n    if args.distributed:\n        if args.dist_url == \"env://\" and args.rank == -1:\n            args.rank = int(os.environ[\"RANK\"])\n        if args.multiprocessing_distributed:\n            # For multiprocessing distributed training, rank needs to be the\n            # global rank among all the processes\n            args.rank = args.rank * ngpus_per_node + gpu\n        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,\n                                world_size=args.world_size, rank=args.rank)\n    \n    if args.gpu==0:\n        print(\"=> creating model '{}'\\n\".format(args.arch))\n    \n    model = PaPi(args, PaPiNet)\n    \n    if args.distributed:\n        # For multiprocessing distributed, DistributedDataParallel constructor\n        # should always set the single device scope, otherwise,\n        # DistributedDataParallel will use all available devices.\n        if args.gpu is not None:\n            torch.cuda.set_device(args.gpu)\n            model.cuda(args.gpu)\n            # When using a single GPU per process and per\n            # DistributedDataParallel, we need to divide the batch size\n            # ourselves based on the total number of GPUs we have\n            args.batch_size = int(args.batch_size / ngpus_per_node)\n            args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)\n            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])\n        else:\n            model.cuda()\n            # DistributedDataParallel will divide and allocate batch_size to all\n            # available GPUs if device_ids are not set\n            model = torch.nn.parallel.DistributedDataParallel(model)\n    elif args.gpu is not None:\n        torch.cuda.set_device(args.gpu)\n        model = model.cuda(args.gpu)\n        # comment out the following line for debugging\n        raise NotImplementedError(\"Only DistributedDataParallel is supported.\")\n    else:\n        # AllGather implementation (batch shuffle, queue update, etc.) in\n        # this code only supports DistributedDataParallel.\n        raise NotImplementedError(\"Only DistributedDataParallel is supported.\")\n    \n    optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)\n    \n    if args.resume:\n        if os.path.isfile(args.resume):\n            print(\"=> loading checkpoint '{}'\".format(args.resume))\n            if args.gpu is None:\n                checkpoint = torch.load(args.resume)\n            else:\n                # Map model to be loaded to specified single gpu.\n                loc = 'cuda:{}'.format(args.gpu)\n                checkpoint = torch.load(args.resume, map_location=loc)\n            args.start_epoch = checkpoint['epoch']\n            model.load_state_dict(checkpoint['state_dict'])\n            optimizer.load_state_dict(checkpoint['optimizer'])\n            print(\"=> loaded checkpoint '{}' (epoch {})'\".format(args.resume, checkpoint['epoch']))\n        else:\n            print(\"=> no checkpoint found at '{}'\".format(args.resume))\n\n\n    if args.dataset == 'fmnist':\n        train_loader, train_partialY_matrix, train_sampler, test_loader = load_fmnist(args)\n\n    elif args.dataset == 'SVHN':\n        train_loader, train_partialY_matrix, train_sampler, test_loader = load_svhn(args)\n        \n    elif args.dataset == 'cifar10':\n        train_loader, train_partialY_matrix, train_sampler, test_loader = load_cifar10(args)\n\n    elif args.dataset == 'cifar100':\n        train_loader, train_partialY_matrix, train_sampler, test_loader = load_cifar100(args)\n    \n    elif args.dataset == 'miniImagenet':\n        train_loader, train_partialY_matrix, train_sampler, test_loader = load_miniImagenet(args)\n    \n    else:\n        raise NotImplementedError(\"You have chosen an unsupported dataset. Please check and try again.\")\n\n    if args.gpu==0:\n        logging.info('\\nAverage candidate num: {}\\n'.format(train_partialY_matrix.sum(1).mean()))\n\n    tempY = train_partialY_matrix.sum(dim=1).unsqueeze(1).repeat(1, train_partialY_matrix.shape[1])\n    uniform_confidence = train_partialY_matrix.float() / tempY\n    uniform_confidence = uniform_confidence.cuda()\n    \n    loss_PaPi_func = PaPiLoss(predicted_score_cls=uniform_confidence, pseudo_label_weight=0.99)\n    \n    sim_criterion = torch.nn.KLDivLoss(reduction='batchmean').cuda()\n\n\n    best_acc = 0\n\n    for epoch in range(args.start_epoch, args.epochs):\n    \n        is_best = False\n        \n        if args.distributed:\n            train_sampler.set_epoch(epoch)\n        \n        adjust_learning_rate(args, optimizer, epoch)\n        \n        loss_PaPi_func.set_alpha(epoch, args)\n\n        acc_train_cls, loss_cls_log, loss_PaPi_log = train(train_loader, model, loss_PaPi_func, optimizer, epoch, args, sim_criterion)\n        \n        loss_PaPi_func.set_pseudo_label_weight(epoch, args)\n        model.module.set_prototype_update_weight(epoch, args)\n\n        acc_test, _ = test(model, test_loader, args, epoch)\n\n        if acc_test.item() > best_acc:\n            best_acc = acc_test.item()\n        \n        if args.gpu==0:\n            with open(os.path.join(args.exp_dir, 'result.log'), 'a+') as f:\n                f.write('Epoch {}: Train_Acc {}, Test_Acc {}, Best_Acc {}. (lr:{})\\n'.format(\\\n                 epoch, acc_train_cls.avg, acc_test.item(), best_acc, optimizer.param_groups[0]['lr']))\n\n            logging.info('Epoch {}: Train_Acc {}, Test_Acc {}, Best_Acc {}. (lr:{})\\n'.format(\\\n                  epoch, acc_train_cls.avg, acc_test.item(), best_acc, optimizer.param_groups[0]['lr']))\n\n\n            \ndef train(train_loader, model, loss_PaPi_func, optimizer, epoch, args, sim_criterion):\n    batch_time = AverageMeter('Time', ':1.2f')\n    data_time = AverageMeter('Data', ':1.2f')\n    acc_cls = AverageMeter('Acc@Cls', ':2.2f')\n    loss_cls_log = AverageMeter('Loss@cls', ':2.2f')\n    loss_PaPi_log = AverageMeter('Loss@PaPi', ':2.2f')\n\n    progress = ProgressMeter(\n        len(train_loader),\n        [batch_time, data_time, acc_cls, loss_cls_log, loss_PaPi_log],\n        prefix=\"Epoch: [{}]\".format(epoch)\n    )\n\n    model.train()\n    \n    end = time.time()\n    \n    for i, (images_1, images_2, labels, true_labels, index) in enumerate(train_loader):\n\n        data_time.update(time.time() - end)\n        \n        X_1, X_2, Y, index = images_1.cuda(), images_2.cuda(), labels.cuda(), index.cuda()\n        \n        Y_true = true_labels.long().detach().cuda()\n        \n        Lambda = np.random.beta(args.alpha_mixup, args.alpha_mixup)\n        idx_rp = torch.randperm(args.batch_size) \n        X_1_rp = X_1[idx_rp]\n        X_2_rp = X_2[idx_rp]\n        Y_rp = Y[idx_rp]\n\n        X_1_mix = Lambda * X_1 + (1 - Lambda) * X_1_rp\n        X_2_mix = Lambda * X_2 + (1 - Lambda) * X_2_rp\n        Y_mix = Lambda * Y + (1 - Lambda) * Y_rp\n\n        cls_out_1, cls_out_2, logits_prot_1, logits_prot_2, logits_prot_1_mix, logits_prot_2_mix = \\\n        model(img_q=X_1, img_k=X_2, img_q_mix=X_1_mix, img_k_mix=X_2_mix, partial_Y=Y, Y_true=Y_true, args=args)\n        \n        batch_size = cls_out_1.shape[0]\n        \n        loss_PaPi_func.update_weight_byclsout1(cls_predicted_score=cls_out_1, batch_index=index, batch_partial_Y=Y, args=args)\n        \n        cls_loss_1, sim_loss_2, alpha_td = loss_PaPi_func(cls_out_1, cls_out_2, logits_prot_1, logits_prot_2, logits_prot_1_mix, logits_prot_2_mix, idx_rp, Lambda, index, args, sim_criterion)\n        \n        loss = cls_loss_1 + alpha_td * sim_loss_2\n        \n        loss_cls_log.update(cls_loss_1.item())\n        loss_PaPi_log.update(loss.item())\n\n        acc = accuracy(cls_out_1, Y_true)\n        acc_cls.update(acc[0].item())\n\n        optimizer.zero_grad()\n        loss.backward()\n        optimizer.step()\n        \n        batch_time.update(time.time() - end)\n        end = time.time()\n        \n        if args.gpu==0:\n            if (i % 50 == 0) or ((i + 1) % len(train_loader) == 0):\n                logging.info('Epoch:[{0}][{1}/{2}]\\t'\n                    'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\\t'\n                    'Data {data_time.val:.3f} ({data_time.avg:.3f})\\t'\n                    'A_cls {Acc_cls.val:.4f} ({Acc_cls.avg:.4f})\\t'\n                    'L_cls {Loss_cls.val:.4f} ({Loss_cls.avg:.4f})\\t'\n                    'L_all {Loss_PaPi.val:.4f} ({Loss_PaPi.avg:.4f})\\t'.format(\n                        epoch, i + 1, len(train_loader), batch_time=batch_time,\n                        data_time=data_time, Acc_cls=acc_cls,\n                        Loss_cls=loss_cls_log, Loss_PaPi=loss_PaPi_log\n                    )\n                )\n        \n    return acc_cls, loss_cls_log, loss_PaPi_log\n\n\n\ndef test(model, test_loader, args, epoch):\n    with torch.no_grad():\n\n        print('\\n=====> Evaluation...\\n')       \n        model.eval()    \n        \n        top1_acc = AverageMeter(\"Top1\")\n        top5_acc = AverageMeter(\"Top5\")\n        \n        for batch_idx, (images, labels) in enumerate(test_loader):\n            images, labels = images.cuda(), labels.cuda()\n            \n            outputs, outputs_pro = model(img_q=images, args=args, eval_only=True)\n            \n            acc1, acc5 = accuracy(outputs, labels, topk=(1, 5))\n            \n            top1_acc.update(acc1[0])\n            top5_acc.update(acc5[0])\n\n            if args.gpu==0:\n                if (batch_idx % 10 == 0) or ((batch_idx + 1) % len(test_loader) == 0):\n                    logging.info(\n                        'Test:[{0}/{1}]\\t'\n                        'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\\t'\n                        'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\\t'\\\n                        .format(batch_idx + 1, len(test_loader), top1=top1_acc, top5=top5_acc)\n                    )\n        \n        # average across all processes\n        acc_tensors = torch.Tensor([top1_acc.avg, top5_acc.avg]).cuda(args.gpu)\n        \n        dist.all_reduce(acc_tensors)        \n        \n        acc_tensors /= args.world_size\n        \n        if args.gpu==0:\n            logging.info('Top1 Accuracy is %.2f%%, Top5 Accuracy is %.2f%%\\n'%(acc_tensors[0], acc_tensors[1]))          \n\n    return acc_tensors[0], acc_tensors[1]\n    \n\n\nif __name__ == '__main__':\n    main()\n",
+    "experimental_info": "Model Architecture:\n- Encoder (`--arch`): resnet18 (used via PaPiNet)\n- Projector Head: mlp (default in PaPiNet constructor), output dimension (`--low-dim`): 128\n- Linear Classifier: integrated within PaPiNet\n\nTraining Settings:\n- Epochs (`--epochs`): 500\n- Batch Size (`-b`, `--batch-size`): 256\n- Learning Rate (`--lr`): 0.05, decayed at epochs 99, 199, 299 by a factor of 0.1 (`--lr-decay-epochs`, `--lr-decay-rate`). Cosine schedule is optional (`--cosine`).\n- Optimizer: SGD with Momentum (`--momentum`) 0.9 and Weight Decay (`--wd`) 1e-4.\n\nPaPi Specific Parameters:\n- Prototypical Temperature (`--tau_proto`): 0.3\n- Mixup Alpha (`--alpha_mixup`): 8.0 (for Beta distribution)\n- Prototype Momentum (`--proto_m`): Dynamically adjusted from 0.99 (`PaPi.proto_weight`) with range `--pro_weight_range '0.9, 0.5'`.\n- Self-Teaching Pseudo-Label Weight: Dynamically adjusted from 0.99 (`PaPiLoss.pseudo_label_weight`) with range `--pseudo_label_weight_range '0.95, 0.8'`.\n- Prototypical Alignment Loss Weight (`--alpha_weight`): Dynamically adjusted (min((epoch / 10) * alpha_weight, alpha_weight)) with a default maximum weight of 1.0.\n\nDataset and Partial Label Generation:\n- Dataset (`--dataset`): cifar10 (default), fmnist, SVHN, cifar100, miniImagenet supported.\n- Partial Label Type (`--exp-type`): rand (uniform, default) or ins (instance-dependent).\n- Partial Rate (`--partial_rate`): 0.1 (ambiguity level).\n- Hierarchical Labels (`--hierarchical`): False (default), applies to cifar100.\n\nData Augmentations:\n- Basic Augmentation (`transform1`): Random horizontal flip, random crop (e.g., 32x32 for CIFARs with 4-pixel padding), ToPILImage, ToTensor, Normalize.\n- Strong Augmentation (`transform2`): AutoAugment policy (e.g., CIFAR10Policy for CIFAR10/100, SVHNPolicy for SVHN, ImageNetPolicy for miniImagenet), Cutout (n_holes=1, length=16 for CIFARs/FMNIST, 20 for SVHN, 32 for miniImagenet), Random horizontal flip, Random crop, ToPILImage, ToTensor, Normalize.\n- Mixup: Applied during training with `alpha_mixup=8.0`."
+}
