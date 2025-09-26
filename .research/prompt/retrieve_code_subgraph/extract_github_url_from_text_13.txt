@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves Bayesian model selection by optimizing the marginal likelihood using gradient ascent. The approach relies on the linearized Laplace (LA) approximation to the log marginal likelihood. To enable stochastic gradients, the authors derive lower bounds by utilizing the dual (NTK) form of the log-determinant term in the Laplace approximation. Three key bounds are introduced: 1) Parametric structured lower bounds (Theorem 1) which show that block-diagonal GGN approximations are lower bounds by partitioning parameters. 2) Subset-of-Data Kernel Bounds (Theorem 2) which partition the NTK on subsets of data and outputs, enabling unbiased stochastic estimates and gradients. 3) Parametric Data Subset Bounds (Theorem 3) which demonstrate the equivalence of NTK-based subset bounds to a parametric (GGN-like) variant on data subsets. A further doubly lower bound (Corollary 3.1) combines parametric structured approximations (e.g., KFAC) with subset-of-data processing. Stochastic optimization is performed by sampling mini-batches of data/output indices, and partitioning strategies, such as output-wise or class-wise partitioning, are explored to improve bound tightness and efficiency. An algorithm (Algorithm 1) is provided for stochastic marginal likelihood estimation.
+
+# GitHub URLs List
+['https://github.com/AlexImmer/ntk-marglik']
+Output:
+{
+    "index": 0
+}
