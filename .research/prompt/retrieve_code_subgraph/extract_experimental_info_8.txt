@@ -1,0 +1,2676 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The approach is built upon a student-teacher framework with weak-strong augmentation, where the teacher model uses weak augmentation and the student model uses strong augmentation (CutMix). It employs two segmentation heads: a standard linear predictor and a prototype-based predictor (only in the student model). The core idea is to enforce consistency between the predictions of the linear predictor (from the teacher, generating pseudo-labels) and the prototype-based predictor (from the student, trained on strongly augmented data). Prototypes are initialized by clustering features from labeled data and dynamically updated during training using both labeled and high-confidence pseudo-labeled pixels.
+
+# Repository Content
+File Path: core/dataset/augmentation.py
+Content:
+import collections
+import imp
+import math
+import numbers
+import random
+
+import cv2
+import numpy as np
+from PIL import Image
+from scipy.ndimage import gaussian_filter
+
+import mindspore
+from mindspore import Tensor
+from mindspore import ops
+from mindspore import nn
+from mindspore.ops import operations as P
+
+
+class Compose(object):
+    """
+    Composes several segsegtransforms together.
+
+    Args:
+        segtransforms (List[Transform]): list of segtransforms to compose.
+
+    Example:
+        segtransforms.Compose([
+            segtransforms.CenterCrop(10),
+            segtransforms.ToTensor()])
+    """
+
+    def __init__(self, segtransforms):
+        self.segtransforms = segtransforms
+
+    def __call__(self, image, label):
+        valid = None
+        for idx, t in enumerate(self.segtransforms):
+            if idx < 5:
+                image, label = t(image, label)
+            else:
+                try:
+                    img_origin, label_origin, img, label, valid = t(image, label)
+                except:
+                    img, label, masks = t(image, label)
+
+        if idx < 5:
+            return image, label
+        elif valid is not None:
+            return img_origin, label_origin, img, label, valid
+        else:
+            return img, label, masks
+
+
+class ToTensor(object):
+    # Converts a PIL Image or numpy.ndarray (H x W x C) to a torch.FloatTensor of shape (1 x C x H x W).
+    def __call__(self, image, label):
+        if isinstance(image, Image.Image) and isinstance(label, Image.Image):
+            image = np.asarray(image)
+            label = np.asarray(label)
+            image = image.copy()
+            label = label.copy()
+        elif not isinstance(image, np.ndarray) or not isinstance(label, np.ndarray):
+            raise (
+                RuntimeError(
+                    "segtransforms.ToTensor() only handle PIL Image and np.ndarray"
+                    "[eg: data readed by PIL.Image.open()].\n"
+                )
+            )
+        if len(image.shape) > 3 or len(image.shape) < 2:
+            raise (
+                RuntimeError(
+                    "segtransforms.ToTensor() only handle np.ndarray with 3 dims or 2 dims.\n"
+                )
+            )
+        if len(image.shape) == 2:
+            image = np.expand_dims(image, axis=2)
+        if not len(label.shape) == 2:
+            raise (
+                RuntimeError(
+                    "segtransforms.ToTensor() only handle np.ndarray labellabel with 2 dims.\n"
+                )
+            )
+
+        image = Tensor(image.transpose((2, 0, 1))[np.newaxis])
+        if not isinstance(image, mindspore.float32):
+            image = image.float()
+        label = Tensor(label[np.newaxis, np.newaxis])
+        if not isinstance(label, mindspore.float32):
+            label = label.float()
+        return image, label
+
+
+class Normalize(object):
+    """
+    Given mean and std of each channel
+    Will normalize each channel of the torch.*Tensor (C*H*W), i.e.
+    channel = (channel - mean) / std
+    """
+
+    def __init__(self, mean, std=None):
+        if std is None:
+            assert len(mean) > 0
+        else:
+            assert len(mean) == len(std)
+            self.std = Tensor(np.float32(std)[:, np.newaxis, np.newaxis])
+        self.mean = Tensor(np.float32(mean)[:, np.newaxis, np.newaxis])
+
+    def __call__(self, image, label):
+        assert image.size(1) == len(self.mean)
+        if self.std is None:
+            image -= self.mean
+        else:
+            image -= self.mean
+            image /= self.std
+        return image, label
+
+
+class Resize(object):
+    """
+    Resize the input tensor to the given size.
+    'size' is a 2-element tuple or list in the order of (h, w)
+    """
+
+    def __init__(self, size):
+        assert isinstance(size, collections.Iterable) and len(size) == 2
+        self.size = size
+
+    def __call__(self, image, label):
+        image = P.ResizeBilinear(image, size=self.size, align_corners=False)
+        # OR:
+        # image = ops.interpolate(image, roi=None, scales=None, sizes=self.size, coordinate_transformation_mode="align_corners", mode="bilinear")
+        label = P.ResizeBilinear(label, size=self.size, align_corners=False)  # current mindspore does not have nearest mode, but this have problems!!!!
+        # label = F.interpolate(label, size=self.size, mode="nearest")
+        return image, label
+
+
+class ResizeLongSize(object):
+    """
+    Resize the long size of the input image into fix size
+    """
+
+    def __init__(self, size=2048):
+        assert type(size) == int, "Long size must be an integer"
+        self.size = size
+
+    def __call__(self, image, label):
+        _, _, h, w = image.size()
+        if h > w:
+            w_r = int(self.size * w / h)
+            image = P.ResizeBilinear(image, size=(self.size, w_r), align_corners=False)
+            label = P.ResizeBilinear(label, size=(self.size, w_r), align_corners=False)
+            # label = F.interpolate(label, size=(self.size, w_r), mode="nearest")
+        else:
+            h_r = int(2048 * h / w)
+            image = P.ResizeBilinear(image, size=(h_r, self.size), align_corners=False)
+            label = P.ResizeBilinear(label, size=(h_r, self.size), align_corners=False)
+            # label = F.interpolate(label, size=(h_r, self.size), mode="nearest")
+
+        return image, label
+
+
+class RandResize(object):
+    """
+    Randomly resize image & label with scale factor in [scale_min, scale_max]
+    """
+
+    def __init__(self, scale, aspect_ratio=None):
+        assert isinstance(scale, collections.Iterable) and len(scale) == 2
+        if (
+            isinstance(scale, collections.Iterable)
+            and len(scale) == 2
+            and isinstance(scale[0], numbers.Number)
+            and isinstance(scale[1], numbers.Number)
+        ):
+            self.scale = scale
+        else:
+            raise (RuntimeError("segtransforms.RandScale() scale param error.\n"))
+        if aspect_ratio is None:
+            self.aspect_ratio = aspect_ratio
+        elif (
+            isinstance(aspect_ratio, collections.Iterable)
+            and len(aspect_ratio) == 2
+            and isinstance(aspect_ratio[0], numbers.Number)
+            and isinstance(aspect_ratio[1], numbers.Number)
+            and 0 < aspect_ratio[0] < aspect_ratio[1]
+        ):
+            self.aspect_ratio = aspect_ratio
+        else:
+            raise (
+                RuntimeError("segtransforms.RandScale() aspect_ratio param error.\n")
+            )
+
+    def __call__(self, image, label):
+        if random.random() < 0.5:
+            temp_scale = self.scale[0] + (1.0 - self.scale[0]) * random.random()
+        else:
+            temp_scale = 1.0 + (self.scale[1] - 1.0) * random.random()
+        temp_aspect_ratio = 1.0
+        if self.aspect_ratio is not None:
+            temp_aspect_ratio = (
+                self.aspect_ratio[0]
+                + (self.aspect_ratio[1] - self.aspect_ratio[0]) * random.random()
+            )
+            temp_aspect_ratio = math.sqrt(temp_aspect_ratio)
+        scale_factor_w = temp_scale * temp_aspect_ratio
+        scale_factor_h = temp_scale / temp_aspect_ratio
+        h, w = image.size()[-2:]
+        new_w = int(w * scale_factor_w)
+        new_h = int(h * scale_factor_h)
+        image = P.ResizeBilinear(image, size=(new_h, new_w), align_corners=False)
+        label = P.ResizeBilinear(label, size=(new_h, new_w), align_corners=False)
+        # label = F.interpolate(label, size=(new_h, new_w), mode="nearest")
+        return image, label
+
+
+class Crop(object):
+    """Crops the given tensor.
+    Args:
+        size (sequence or int): Desired output size of the crop. If size is an
+        int instead of sequence like (h, w), a square crop (size, size) is made.
+    """
+
+    def __init__(self, size, crop_type="center", ignore_label=255):
+        if isinstance(size, int):
+            self.crop_h = size
+            self.crop_w = size
+        elif (
+            isinstance(size, collections.Iterable)
+            and len(size) == 2
+            and isinstance(size[0], int)
+            and isinstance(size[1], int)
+            and size[0] > 0
+            and size[1] > 0
+        ):
+            self.crop_h = size[0]
+            self.crop_w = size[1]
+        else:
+            raise (RuntimeError("crop size error.\n"))
+        if crop_type == "center" or crop_type == "rand":
+            self.crop_type = crop_type
+        else:
+            raise (RuntimeError("crop type error: rand | center\n"))
+        if isinstance(ignore_label, int):
+            ##!!!!!!change to 0
+            self.ignore_label = 0
+        else:
+            raise (RuntimeError("ignore_label should be an integer number\n"))
+
+    def __call__(self, image, label):
+        h, w = image.size()[-2:]
+        pad_h = max(self.crop_h - h, 0)
+        pad_w = max(self.crop_w - w, 0)
+        pad_h_half = int(pad_h / 2)
+        pad_w_half = int(pad_w / 2)
+        if pad_h > 0 or pad_w > 0:
+            border = (pad_w_half, pad_w - pad_w_half, pad_h_half, pad_h - pad_h_half)
+            image = ops.pad(image, border, mode="constant", value=0.0)
+            label = ops.pad(label, border, mode="constant", value=self.ignore_label)
+        h, w = image.size()[-2:]
+        if self.crop_type == "rand":
+            h_off = random.randint(0, h - self.crop_h)
+            w_off = random.randint(0, w - self.crop_w)
+        else:
+            h_off = (h - self.crop_h) // 2
+            w_off = (w - self.crop_w) // 2
+        image = image[:, :, h_off : h_off + self.crop_h, w_off : w_off + self.crop_w]
+        label = label[:, :, h_off : h_off + self.crop_h, w_off : w_off + self.crop_w]
+        return image, label
+
+
+class RandRotate(object):
+    """
+    Randomly rotate image & label with rotate factor in [rotate_min, rotate_max]
+    """
+
+    def __init__(self, rotate, ignore_label=255):
+        assert isinstance(rotate, collections.Iterable) and len(rotate) == 2
+        if isinstance(rotate[0], numbers.Number) and isinstance(
+            rotate[1], numbers.Number
+        ):
+            self.rotate = rotate
+        else:
+            raise (RuntimeError("segtransforms.RandRotate() scale param error.\n"))
+        assert isinstance(ignore_label, int)
+        self.ignore_label = ignore_label
+
+    def __call__(self, image, label):
+        # angle = self.rotate[0] + (self.rotate[1] - self.rotate[0]) * random.random()
+        # M = cv2.getRotationMatrix2D((0, 0), angle, 1)
+        # t_M = Tensor(M).unsqueeze(dim=0)
+        # grid = F.affine_grid(t_M, image.size())
+
+        # image = F.grid_sample(image, grid, mode="bilinear", align_corners=False)
+        # label += 1
+        # label = F.grid_sample(label, grid, mode="nearest", align_corners=False)
+        # label[label == 0.0] = self.ignore_label + 1
+        # label -= 1
+        # return image, label
+        
+        # TODO: mindspore transfer to be done
+        pass
+
+
+class RandomHorizontalFlip(object):
+    def __call__(self, image, label):
+        if random.random() < 0.5:
+            # https://mindspore.cn/docs/api/en/r1.3/api_python/ops/mindspore.ops.ReverseV2.html#mindspore.ops.ReverseV2
+            op_flip = ops.ReverseV2(axis=[3])
+            image = op_flip(image)
+            label = op_flip(label)
+        return image, label
+
+
+class RandomVerticalFlip(object):
+    def __call__(self, image, label):
+        if random.random() < 0.5:
+            op_flip = ops.ReverseV2(axis=[2])
+            image = op_flip(image)
+            label = op_flip(label)
+        return image, label
+
+
+class RandomGaussianBlur(object):
+    def __init__(self, radius=2):
+        self._filter = GaussianBlur(radius=radius)
+
+    def __call__(self, image, label):
+        if random.random() < 0.5:
+            image = self._filter(image)
+        return image, label
+
+
+class GaussianBlur(nn.Module):
+    def __init__(self, radius):
+        super(GaussianBlur, self).__init__()
+        self.radius = radius
+        self.kernel_size = 2 * radius + 1
+        self.sigma = 0.3 * (self.radius - 1) + 0.8
+        self.kernel = nn.Conv2d(
+            3, 3, self.kernel_size, stride=1, padding=self.radius, has_bias=False, groups=3
+        )
+        self.weight_init()
+
+    def construct(self, input):
+        assert input.size(1) == 3
+        return self.kernel(input)
+
+    def weight_init(self):
+        weights = np.zeros((self.kernel_size, self.kernel_size))
+        weights[self.radius, self.radius] = 1
+        weight = gaussian_filter(weights, sigma=self.sigma)
+        for param in self.kernel.parameters():
+            param.data.copy_(Tensor(weight))
+            param.requires_grad = False
+
+
+class Cutout(object):
+    """Randomly mask out one or more patches from an image.
+    Args:
+        n_holes (int): Number of patches to cut out of each image.
+        length (int): The length (in pixels) of each square patch.
+    """
+
+    def __init__(self, n_holes, length):
+        self.n_holes = n_holes
+        self.length = length
+
+    def __call__(self, img, label):
+        """
+        Args:
+            img (Tensor): Tensor image of size (C, H, W).
+        Returns:
+            Tensor: Image with n_holes of dimension length x length cut out of it.
+        """
+        # img 1,3,h,w  label 1,1,h,w
+        h = img.size(2)
+        w = img.size(3)
+        img_origin = img.clone()
+        label_origin = label.clone()
+        mask = np.ones((h, w), np.float32)
+        valid = np.zeros((h, w), np.float32)
+
+        for n in range(self.n_holes):
+            y = np.random.randint(h)
+            x = np.random.randint(w)
+
+            y1 = np.clip(y - self.length // 2, 0, h)
+            y2 = np.clip(y + self.length // 2, 0, h)
+            x1 = np.clip(x - self.length // 2, 0, w)
+            x2 = np.clip(x + self.length // 2, 0, w)
+
+            mask[y1:y2, x1:x2] = 0.0
+            valid[y1:y2, x1:x2] = 255
+
+        mask = Tensor(mask)
+        valid = Tensor(valid)
+        valid = valid.expand_as(label_origin)
+        mask = mask.expand_as(img)
+        img = img * mask
+
+        # label = label + mask
+        # label[label>20] = 255
+        return img_origin, label_origin, img, label, valid
+
+
+class Cutmix(object):
+    """Randomly mask out one or more patches from an image.
+    Args:
+        n_holes (int): Number of patches to cut out of each image.
+        length (int): The length (in pixels) of each square patch.
+    """
+
+    def __init__(
+        self, prop_range, n_holes=1, random_aspect_ratio=True, within_bounds=True
+    ):
+        self.n_holes = n_holes
+        if isinstance(prop_range, float):
+            self.prop_range = (prop_range, prop_range)
+        self.random_aspect_ratio = random_aspect_ratio
+        self.within_bounds = within_bounds
+
+    def __call__(self, img, label):
+        """
+        Args:
+            img (Tensor): Tensor image of size (C, H, W).
+        Returns:
+            Tensor: Image with n_holes of dimension length x length cut out of it.
+        """
+        # img 1,3,h,w  label 1,1,h,w
+        h = img.size(2)
+        w = img.size(3)
+        n_masks = img.size(0)
+
+        # mask = np.ones((h, w), np.float32)
+        # valid = np.zeros((h ,w),np.float32)
+
+        mask_props = np.random.uniform(
+            self.prop_range[0], self.prop_range[1], size=(n_masks, self.n_holes)
+        )
+        if self.random_aspect_ratio:
+            y_props = np.exp(
+                np.random.uniform(low=0.0, high=1.0, size=(n_masks, self.n_holes))
+                * np.log(mask_props)
+            )
+            x_props = mask_props / y_props
+        else:
+            y_props = x_props = np.sqrt(mask_props)
+
+        fac = np.sqrt(1.0 / self.n_holes)
+        y_props *= fac
+        x_props *= fac
+
+        sizes = np.round(
+            np.stack([y_props, x_props], axis=2) * np.array((h, w))[None, None, :]
+        )
+
+        if self.within_bounds:
+            positions = np.round(
+                (np.array((h, w)) - sizes)
+                * np.random.uniform(low=0.0, high=1.0, size=sizes.shape)
+            )
+            rectangles = np.append(positions, positions + sizes, axis=2)
+        else:
+            centres = np.round(
+                np.array((h, w)) * np.uniform(low=0.0, high=1.0, size=sizes.shape)
+            )
+            rectangles = np.append(centres - sizes * 0.5, centres + sizes * 0.5, axis=2)
+
+        masks = np.zeros((n_masks, 1) + (h, w))
+        for i, sample_rectangles in enumerate(rectangles):
+            for y0, x0, y1, x1 in sample_rectangles:
+                masks[i, 0, int(y0) : int(y1), int(x0) : int(x1)] = 1
+
+        masks = Tensor(masks)
+
+        return img, label, masks
+
+
+File Path: core/dataset/base.py
+Content:
+import logging
+
+from PIL import Image
+
+
+class BaseDataset:
+    def __init__(self, d_list, **kwargs):
+        # parse the input list
+        self.parse_input_list(d_list, **kwargs)
+
+    def parse_input_list(self, d_list, max_sample=-1, start_idx=-1, end_idx=-1):
+        logger = logging.getLogger("global")
+        assert isinstance(d_list, str)
+        if "cityscapes" in d_list:
+            self.list_sample = [
+                [
+                    line.strip(),
+                    "gtFine/" + line.strip()[12:-15] + "gtFine_labelTrainIds.png",
+                ]
+                for line in open(d_list, "r")
+            ]
+        elif "pascal" in d_list or "VOC" in d_list:
+            self.list_sample = [
+                [
+                    "JPEGImages/{}.jpg".format(line.strip()),
+                    "SegmentationClassAug/{}.png".format(line.strip()),
+                ]
+                for line in open(d_list, "r")
+            ]
+        else:
+            raise "unknown dataset!"
+
+        if max_sample > 0:
+            self.list_sample = self.list_sample[0:max_sample]
+        if start_idx >= 0 and end_idx >= 0:
+            self.list_sample = self.list_sample[start_idx:end_idx]
+
+        self.num_sample = len(self.list_sample)
+        assert self.num_sample > 0
+        logger.info("# samples: {}".format(self.num_sample))
+
+    def img_loader(self, path, mode):
+        with open(path, "rb") as f:
+            img = Image.open(f)
+            return img.convert(mode)
+
+    def __len__(self):
+        return self.num_sample
+
+File Path: core/dataset/builder.py
+Content:
+import logging
+
+from .cityscapes import build_city_semi_loader, build_cityloader
+from .pascal_voc import build_voc_semi_loader, build_vocloader
+
+logger = logging.getLogger("global")
+
+
+def get_loader(cfg, seed=0, distributed_flag=True):
+    cfg_dataset = cfg["dataset"]
+
+    if cfg_dataset["type"] == "cityscapes_semi":
+        train_loader_sup, train_loader_unsup = build_city_semi_loader(
+            "train", cfg, seed=seed, distributed_flag=distributed_flag
+        )
+        val_loader = build_cityloader("val", cfg, distributed_flag=distributed_flag)
+        logger.info("Get loader Done...")
+        return train_loader_sup, train_loader_unsup, val_loader
+
+    elif cfg_dataset["type"] == "cityscapes":
+        train_loader_sup = build_cityloader("train", cfg, seed=seed)
+        val_loader = build_cityloader("val", cfg)
+        logger.info("Get loader Done...")
+        return train_loader_sup, val_loader
+
+    elif cfg_dataset["type"] == "pascal_semi":
+        train_loader_sup, train_loader_unsup = build_voc_semi_loader(
+            "train", cfg, seed=seed, distributed_flag=distributed_flag
+        )
+        val_loader = build_vocloader("val", cfg, distributed_flag=distributed_flag)
+        logger.info("Get loader Done...")
+        return train_loader_sup, train_loader_unsup, val_loader
+
+    elif cfg_dataset["type"] == "pascal":
+        train_loader_sup = build_vocloader("train", cfg, seed=seed, distributed_flag=distributed_flag)
+        val_loader = build_vocloader("val", cfg, distributed_flag=distributed_flag)
+        logger.info("Get loader Done...")
+        return train_loader_sup, val_loader
+
+    else:
+        raise NotImplementedError(
+            "dataset type {} is not supported".format(cfg_dataset)
+        )
+
+File Path: core/dataset/cityscapes.py
+Content:
+import copy
+import math
+import os
+import os.path
+import random
+
+import numpy as np
+
+import mindspore
+from mindspore import ops
+import mindspore.dataset as ds
+
+from . import augmentation as psp_trsform
+from .base import BaseDataset
+
+
+class city_dset(BaseDataset):
+    def __init__(self, data_root, data_list, trs_form, seed, n_sup, split="val", cp=False, paste_trs=None):
+        # cp: copy paste
+        super(city_dset, self).__init__(data_list)
+        self.data_root = data_root
+        self.transform = trs_form
+        random.seed(seed)
+        if len(self.list_sample) >= n_sup and split == "train":
+            self.list_sample_new = random.sample(self.list_sample, n_sup)
+        elif len(self.list_sample) < n_sup and split == "train":
+            num_repeat = math.ceil(n_sup / len(self.list_sample))
+            self.list_sample = self.list_sample * num_repeat
+
+            self.list_sample_new = random.sample(self.list_sample, n_sup)
+        else:
+            self.list_sample_new = self.list_sample
+
+        self.cp = cp
+        self.prob = 0.5
+        self.paste_trs = paste_trs
+
+    def __getitem__(self, index):
+        # load image and its label
+        image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
+        label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
+        image = self.img_loader(image_path, "RGB")
+        label = self.img_loader(label_path, "L")
+        image, label = self.transform(image, label)
+        if self.cp:
+            # print("enter cp")
+            # import pdb; pdb.set_trace()
+            if random.random() > self.prob:
+                paste_idx = random.randint(0, self.__len__() - 1)
+                paste_img_path = os.path.join(
+                    self.data_root, self.list_sample_new[paste_idx][0]
+                )
+                paste_img = self.img_loader(paste_img_path, "RGB")
+                paste_label_path = os.path.join(
+                    self.data_root, self.list_sample_new[paste_idx][1]
+                )
+                paste_label = self.img_loader(paste_label_path, "L")
+                paste_img, paste_label = self.paste_trs(paste_img, paste_label)
+                return ops.Concat(0)((image[0], paste_img[0])), ops.Concat(0)(
+                    [label[0, 0].long(), paste_label[0, 0].long()]
+                )
+            else:
+                # paste_img, paste_label = None, None
+                h, w = image[0].shape[1], image[0].shape[2]
+                paste_img = ops.zeros((3, h, w), mindspore.float32)
+                paste_label = ops.zeros((h, w), mindspore.float32)
+                return ops.Concat(0)((image[0], paste_img)), ops.Concat(0)(
+                    [label[0, 0].long(), paste_label.long()], dim=0
+                )
+            
+        return image[0], label[0, 0].long()
+
+    def __len__(self):
+        return len(self.list_sample_new)
+
+
+def build_transfrom(cfg, acp=False):
+    trs_form = []
+    mean, std, ignore_label = cfg["mean"], cfg["std"], cfg["ignore_label"]
+    trs_form.append(psp_trsform.ToTensor())
+    trs_form.append(psp_trsform.Normalize(mean=mean, std=std))
+    if cfg.get("resize", False):
+        trs_form.append(psp_trsform.Resize(cfg["resize"]))
+    if cfg.get("rand_resize", False):
+        if not acp:
+            trs_form.append(psp_trsform.RandResize(cfg["rand_resize"]))
+        else:
+            trs_form.append(psp_trsform.RandResize(cfg["acp"]["rand_resize"]))
+    if cfg.get("rand_rotation", False):
+        rand_rotation = cfg["rand_rotation"]
+        trs_form.append(
+            psp_trsform.RandRotate(rand_rotation, ignore_label=ignore_label)
+        )
+    if cfg.get("GaussianBlur", False) and cfg["GaussianBlur"]:
+        trs_form.append(psp_trsform.RandomGaussianBlur())
+    if cfg.get("flip", False) and cfg.get("flip"):
+        trs_form.append(psp_trsform.RandomHorizontalFlip())
+    if cfg.get("crop", False):
+        crop_size, crop_type = cfg["crop"]["size"], cfg["crop"]["type"]
+        trs_form.append(
+            psp_trsform.Crop(crop_size, crop_type=crop_type, ignore_label=ignore_label)
+        )
+    if cfg.get("cutout", False):
+        n_holes, length = cfg["cutout"]["n_holes"], cfg["cutout"]["length"]
+        trs_form.append(psp_trsform.Cutout(n_holes=n_holes, length=length))
+    if cfg.get("cutmix", False):
+        n_holes, prop_range = cfg["cutmix"]["n_holes"], cfg["cutmix"]["prop_range"]
+        trs_form.append(psp_trsform.Cutmix(prop_range=prop_range, n_holes=n_holes))
+
+    return psp_trsform.Compose(trs_form)
+
+
+def build_cityloader(split, all_cfg, seed=0, distributed_flag=True):
+    cfg_dset = all_cfg["dataset"]
+    cfg_trainer = all_cfg["trainer"]
+
+    cfg = copy.deepcopy(cfg_dset)
+    cfg.update(cfg.get(split, {}))
+
+    workers = cfg.get("workers", 2)
+    batch_size = cfg.get("batch_size", 1)
+    n_sup = cfg.get("n_sup", 2975)
+
+    # build transform
+    trs_form = build_transfrom(cfg)
+    dset = city_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup, split)
+
+    # build sampler
+    if distributed_flag:
+        sample = ds.DistributedSampler(dset)
+    else:
+        sample = ds.RandomSampler(dset)
+    
+    loader = ds.GeneratorDataset(
+        dset,
+        ["data", "label"],
+        num_parallel_workers=workers,
+        sampler=sample,
+        shuffle=False,
+    )
+    loader = loader.batch(batch_size=batch_size, drop_remainder=False)
+    return loader
+
+
+def build_city_semi_loader(split, all_cfg, seed=0, distributed_flag=True):
+    cfg_dset = all_cfg["dataset"]
+
+    cfg = copy.deepcopy(cfg_dset)
+    cfg.update(cfg.get(split, {}))
+
+    workers = cfg.get("workers", 2)
+    batch_size = cfg.get("batch_size", 1)
+    n_sup = 2975 - cfg.get("n_sup", 2975)
+
+    # build transform
+    trs_form = build_transfrom(cfg)
+    trs_form_unsup = build_transfrom(cfg)
+    # import pdb; pdb.set_trace()
+    if cfg.get("acp", False):
+        paste_trs = build_transfrom(cfg, acp=True)
+        dset = city_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup, split, cp=True, paste_trs=paste_trs)
+    else:
+        dset = city_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup, split)
+    # dset = city_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup, split)
+
+    if split == "val":
+        # build sampler
+        if distributed_flag:
+            sample = ds.DistributedSampler(dset)
+        else:
+            sample = ds.RandomSampler(dset)
+        
+        loader = ds.GeneratorDataset(
+            dset,
+            ["data", "label"],
+            num_parallel_workers=workers,
+            sampler=sample,
+            shuffle=False,
+        )
+        loader = loader.batch(batch_size=batch_size, drop_remainder=False)
+        return loader
+
+    else:
+        # build sampler for unlabeled set
+        data_list_unsup = cfg["data_list"].replace("labeled.txt", "unlabeled.txt")
+        dset_unsup = city_dset(
+            cfg["data_root"], data_list_unsup, trs_form_unsup, seed, n_sup, split
+        )
+        if distributed_flag:
+            sample_sup = ds.DistributedSampler(dset)
+        else:
+            sample_sup = ds.RandomSampler(dset)
+        
+        loader_sup = ds.GeneratorDataset(
+            dset,
+            ["data", "label"],
+            num_parallel_workers=workers,
+            sampler=sample,
+            shuffle=False,
+        )
+        loader_sup = loader_sup.batch(batch_size=batch_size, drop_remainder=True)
+
+        
+        if distributed_flag:
+            sample_unsup = ds.DistributedSampler(dset_unsup)
+        else:
+            sample_unsup = ds.RandomSampler(dset_unsup)
+        
+        loader_unsup = ds.GeneratorDataset(
+            dset_unsup,
+            ["data", "label"],
+            num_parallel_workers=workers,
+            sampler=sample,
+            shuffle=False,
+        )
+        loader_unsup = loader_unsup.batch(batch_size=batch_size, drop_remainder=True)
+        return loader_sup, loader_unsup
+
+File Path: core/dataset/pascal_voc.py
+Content:
+import copy
+import math
+import os
+import os.path
+import random
+
+import numpy as np
+
+import mindspore.dataset as ds
+
+from . import augmentation as psp_trsform
+from .base import BaseDataset
+
+
+class voc_dset(BaseDataset):
+    def __init__(
+        self, data_root, data_list, trs_form, seed=0, n_sup=10582, split="val"
+    ):
+        super(voc_dset, self).__init__(data_list)
+        self.data_root = data_root
+        self.transform = trs_form
+        random.seed(seed)
+        if len(self.list_sample) >= n_sup and split == "train":
+            self.list_sample_new = random.sample(self.list_sample, n_sup)
+        elif len(self.list_sample) < n_sup and split == "train":
+            num_repeat = math.ceil(n_sup / len(self.list_sample))
+            self.list_sample = self.list_sample * num_repeat
+
+            self.list_sample_new = random.sample(self.list_sample, n_sup)
+        else:
+            self.list_sample_new = self.list_sample
+
+    def __getitem__(self, index):
+        # load image and its label
+        image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
+        label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
+        image = self.img_loader(image_path, "RGB")
+        label = self.img_loader(label_path, "L")
+        image, label = self.transform(image, label)
+        return image[0], label[0, 0].long()
+
+    def __len__(self):
+        return len(self.list_sample_new)
+
+
+def build_transfrom(cfg):
+    trs_form = []
+    mean, std, ignore_label = cfg["mean"], cfg["std"], cfg["ignore_label"]
+    trs_form.append(psp_trsform.ToTensor())
+    trs_form.append(psp_trsform.Normalize(mean=mean, std=std))
+    if cfg.get("resize", False):
+        trs_form.append(psp_trsform.Resize(cfg["resize"]))
+    if cfg.get("rand_resize", False):
+        trs_form.append(psp_trsform.RandResize(cfg["rand_resize"]))
+    if cfg.get("rand_rotation", False):
+        rand_rotation = cfg["rand_rotation"]
+        trs_form.append(
+            psp_trsform.RandRotate(rand_rotation, ignore_label=ignore_label)
+        )
+    if cfg.get("GaussianBlur", False) and cfg["GaussianBlur"]:
+        trs_form.append(psp_trsform.RandomGaussianBlur())
+    if cfg.get("flip", False) and cfg.get("flip"):
+        trs_form.append(psp_trsform.RandomHorizontalFlip())
+    if cfg.get("crop", False):
+        crop_size, crop_type = cfg["crop"]["size"], cfg["crop"]["type"]
+        trs_form.append(
+            psp_trsform.Crop(crop_size, crop_type=crop_type, ignore_label=ignore_label)
+        )
+    return psp_trsform.Compose(trs_form)
+
+
+def build_vocloader(split, all_cfg, seed=0, distributed_flag=True):
+    cfg_dset = all_cfg["dataset"]
+
+    cfg = copy.deepcopy(cfg_dset)
+    cfg.update(cfg.get(split, {}))
+
+    workers = cfg.get("workers", 2)
+    batch_size = cfg.get("batch_size", 1)
+    n_sup = cfg.get("n_sup", 10582)
+    # build transform
+    trs_form = build_transfrom(cfg)
+    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup)
+
+    # build sampler
+    if distributed_flag:
+        sample = ds.DistributedSampler(dset)
+    else:
+        sample = ds.RandomSampler(dset)
+
+    loader = ds.GeneratorDataset(
+        dset,
+        ["data", "label"],
+        num_parallel_workers=workers,
+        sampler=sample,
+        shuffle=False,
+    )
+    loader = loader.batch(batch_size=batch_size, drop_remainder=False)
+    return loader
+
+
+def build_voc_semi_loader(split, all_cfg, seed=0, distributed_flag=True):
+    cfg_dset = all_cfg["dataset"]
+
+    cfg = copy.deepcopy(cfg_dset)
+    cfg.update(cfg.get(split, {}))
+
+    workers = cfg.get("workers", 2)
+    batch_size = cfg.get("batch_size", 1)
+    n_sup = 10582 - cfg.get("n_sup", 10582)
+
+    # build transform
+    trs_form = build_transfrom(cfg)
+    trs_form_unsup = build_transfrom(cfg)
+    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup, split)
+
+    if split == "val":
+        # build sampler
+        if distributed_flag:
+            sample = ds.DistributedSampler(dset)
+        else:
+            sample = ds.RandomSampler(dset)
+        
+        loader = ds.GeneratorDataset(
+            dset,
+            ["data", "label"],
+            num_parallel_workers=workers,
+            sampler=sample,
+            shuffle=False,
+        )
+        loader = loader.batch(batch_size=batch_size, drop_remainder=False)
+        return loader
+
+    else:
+        # build sampler for unlabeled set
+        data_list_unsup = cfg["data_list"].replace("labeled.txt", "unlabeled.txt")
+        dset_unsup = voc_dset(
+            cfg["data_root"], data_list_unsup, trs_form_unsup, seed, n_sup, split
+        )
+        if distributed_flag:
+            sample_sup = ds.DistributedSampler(dset)
+        else:
+            sample_sup = ds.RandomSampler(dset)
+        
+        loader_sup = ds.GeneratorDataset(
+            dset,
+            ["data", "label"],
+            num_parallel_workers=workers,
+            sampler=sample,
+            shuffle=False,
+        )
+        loader_sup = loader_sup.batch(batch_size=batch_size, drop_remainder=True)
+
+        if distributed_flag:
+            sample_unsup = ds.DistributedSampler(dset_unsup)
+        else:
+            sample_unsup = ds.RandomSampler(dset_unsup)
+        
+        loader_unsup = ds.GeneratorDataset(
+            dset_unsup,
+            ["data", "label"],
+            num_parallel_workers=workers,
+            sampler=sample,
+            shuffle=False,
+        )
+        loader_unsup = loader_unsup.batch(batch_size=batch_size, drop_remainder=True)
+        
+        return loader_sup, loader_unsup
+
+File Path: core/models/__init__.py
+Content:
+
+File Path: core/models/base.py
+Content:
+import mindspore.nn as nn
+import mindspore.ops as ops
+from mindspore.ops import operations as P
+
+def get_syncbn():
+    # return nn.BatchNorm2d
+    return nn.SyncBatchNorm
+
+
+class ASPP(nn.Cell):
+    """
+    Reference:
+        Chen, Liang-Chieh, et al. *"Rethinking Atrous Convolution for Semantic Image Segmentation."*
+    """
+
+    def __init__(
+        self, in_planes, inner_planes=256, sync_bn=False, dilations=(12, 24, 36)
+    ):
+        super(ASPP, self).__init__()
+
+        norm_layer = get_syncbn() if sync_bn else nn.BatchNorm2d
+        self.conv1 = nn.SequentialCell(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Conv2d(
+                in_planes,
+                inner_planes,
+                kernel_size=1,
+                padding=0,
+                dilation=1,
+                has_bias=False,
+                weight_init='xavier_uniform',
+            ),
+            norm_layer(inner_planes),
+            nn.ReLU(),
+        )
+        self.conv2 = nn.SequentialCell(
+            nn.Conv2d(
+                in_planes,
+                inner_planes,
+                kernel_size=1,
+                padding=0,
+                dilation=1,
+                has_bias=False,
+                weight_init='xavier_uniform',
+            ),
+            norm_layer(inner_planes),
+            nn.ReLU(),
+        )
+        self.conv3 = nn.SequentialCell(
+            nn.Conv2d(
+                in_planes,
+                inner_planes,
+                kernel_size=3,
+                padding=dilations[0],
+                pad_mode="pad",
+                dilation=dilations[0],
+                has_bias=False,
+                weight_init='xavier_uniform',
+            ),
+            norm_layer(inner_planes),
+            nn.ReLU(),
+        )
+        self.conv4 = nn.SequentialCell(
+            nn.Conv2d(
+                in_planes,
+                inner_planes,
+                kernel_size=3,
+                padding=dilations[1],
+                pad_mode="pad",
+                dilation=dilations[1],
+                has_bias=False,
+                weight_init='xavier_uniform',
+            ),
+            norm_layer(inner_planes),
+            nn.ReLU(),
+        )
+        self.conv5 = nn.SequentialCell(
+            nn.Conv2d(
+                in_planes,
+                inner_planes,
+                kernel_size=3,
+                padding=dilations[2],
+                pad_mode="pad",
+                dilation=dilations[2],
+                has_bias=False,
+                weight_init='xavier_uniform',
+            ),
+            norm_layer(inner_planes),
+            nn.ReLU(),
+        )
+
+        self.out_planes = (len(dilations) + 2) * inner_planes
+
+        self.concat = P.Concat(axis=1)
+        self.shape = P.Shape()
+
+    def get_outplanes(self):
+        return self.out_planes
+
+    def construct(self, x):
+        _, _, h, w = self.shape(x)
+        feat1 = ops.ResizeBilinear((h, w), align_corners=True)(self.conv1(x))
+        feat2 = self.conv2(x)
+        feat3 = self.conv3(x)
+        feat4 = self.conv4(x)
+        feat5 = self.conv5(x)
+        aspp_out = self.concat((feat1, feat2, feat3, feat4, feat5))
+        return aspp_out
+
+File Path: core/models/decoder.py
+Content:
+from os import stat
+from random import sample
+from turtle import forward
+import numpy as np
+import pickle
+
+import mindspore
+import mindspore.nn as nn
+import mindspore.ops as ops
+from mindspore.ops import operations as P
+from mindspore import Tensor, Parameter
+import mindspore.numpy as ms_np
+
+from .base import ASPP, get_syncbn
+
+
+class dec_deeplabv3_plus(nn.Cell):
+    def __init__(
+        self,
+        in_planes,
+        num_classes=19,
+        inner_planes=256,
+        sync_bn=False,
+        dilations=(12, 24, 36),
+        rep_head=True,
+        rep_clf=False,
+    ):
+        super(dec_deeplabv3_plus, self).__init__()
+
+        norm_layer = get_syncbn() if sync_bn else nn.BatchNorm2d
+        self.rep_head = rep_head
+        self.rep_clf = rep_clf
+
+        self.low_conv = nn.SequentialCell(
+            nn.Conv2d(256, 256, kernel_size=1, has_bias=True, weight_init='xavier_uniform',), 
+            norm_layer(256), nn.ReLU()
+        )
+
+        self.aspp = ASPP(
+            in_planes, inner_planes=inner_planes, sync_bn=sync_bn, dilations=dilations
+        )
+
+        self.head = nn.SequentialCell(
+            nn.Conv2d(
+                self.aspp.get_outplanes(),
+                256,
+                kernel_size=3,
+                padding=1,
+                pad_mode="pad",
+                dilation=1,
+                has_bias=False,
+                weight_init='xavier_uniform',
+            ),
+            norm_layer(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+        )
+
+        self.num_classes = num_classes
+        self.classifier = nn.SequentialCell(
+            nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=True, weight_init='xavier_uniform'),
+            norm_layer(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=True, weight_init='xavier_uniform'),
+            norm_layer(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(256, num_classes, kernel_size=1, stride=1, padding=0, has_bias=True, weight_init='xavier_uniform'),
+        )
+
+        if self.rep_head:
+            self.representation = nn.SequentialCell(
+                nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=True, weight_init='xavier_uniform'),
+                norm_layer(256),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=True, weight_init='xavier_uniform'),
+                norm_layer(256),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Conv2d(256, 256, kernel_size=1, stride=1, padding=0, has_bias=True, weight_init='xavier_uniform'),
+            )
+        
+        self.concat = P.Concat(axis=1)
+        self.shape = P.Shape()
+
+    def construct(self, x):
+        x1, x2, x3, x4 = x
+        aspp_out = self.aspp(x4)
+        low_feat = self.low_conv(x1)
+        aspp_out = self.head(aspp_out)
+        h, w = self.shape(low_feat)[-2:]
+        aspp_out = ops.ResizeBilinear((h, w), align_corners=True)(aspp_out)
+        aspp_out = self.concat((low_feat, aspp_out))
+
+        logits = self.classifier(aspp_out)
+        res = {"pred": logits}
+
+        if self.rep_head:
+            res["rep"] = self.representation(aspp_out)
+        
+        if self.rep_clf:
+            res["rep_clf"] = aspp_out
+
+        return res
+
+
+class Aux_Module(nn.Cell):
+    def __init__(self, in_planes, num_classes=19, sync_bn=False):
+        super(Aux_Module, self).__init__()
+
+        norm_layer = get_syncbn() if sync_bn else nn.BatchNorm2d
+        self.aux = nn.SequentialCell(
+            nn.Conv2d(in_planes, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", weight_init='xavier_uniform'),
+            norm_layer(256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Conv2d(256, num_classes, kernel_size=1, stride=1, padding=0, has_bias=True, weight_init='xavier_uniform'),
+        )
+    
+    def construct(self, x):
+        res = self.aux(x)
+        return res
+
+
+class CosProto_Module(nn.Cell):
+    def __init__(self, in_planes, num_classes, num_micro_proto, init_proto_path, proto_unpdate_momentum=0.99):
+        super(CosProto_Module, self).__init__()
+        self.in_planes = in_planes
+        self.num_classes = num_classes
+        self.num_micro_proto = num_micro_proto
+        self.init_proto_path = init_proto_path
+        self.temp = 0.1
+
+        init_proto = np.random.randn(num_micro_proto * num_classes, in_planes).astype('f')
+        self.proto_list = Parameter(init_proto, requires_grad=False)
+        self.momentum = proto_unpdate_momentum
+        # TODO: val does not need to load
+        # self.init_proto()
+        
+        # mindspre operations
+        self.shape = P.Shape()
+        self.transpose = ops.Transpose()
+        self.reshape = ops.Reshape()
+        self.einsum = ops.Einsum("nd,md->nm")
+    
+    @staticmethod
+    def l2_normalize(x):
+        return ops.L2Normalize(axis=-1)(x)
+
+    def construct(self, x, select_mask):
+        bs, in_channel, h_origin, w_origin = self.shape(x)
+        
+        # x->pixel2sample: bs, C, H, W --> bs*H*W, C
+        satisfied_loc = (select_mask == 1).astype(mindspore.int32)
+        # TODO: mindspore 1.10 version does not support mask-based slice on tensor
+        # x_p2s = self.reshape(self.transpose(x, (0, 2, 3, 1))[:, satisfied_loc], (-1, self.in_planes))
+        x_p2s = self.reshape(self.transpose(x, (0, 2, 3, 1)), (-1, self.in_planes))
+        x_p2s = self.l2_normalize(x_p2s)
+
+        cur_proto = self.proto_list.clone()
+        cur_proto.requires_grad = False
+        cur_proto = self.l2_normalize(cur_proto)
+        
+        masks = self.einsum((x_p2s, cur_proto))
+        fuse_res = self.reshape(masks, (-1, self.num_classes, self.num_micro_proto))
+        res_idx, res = ops.ArgMaxWithValue(axis=2)(fuse_res)
+
+        unsatisfied_loc = (select_mask == 0).astype(mindspore.float32)
+        res = self.transpose(self.reshape(res, (bs, h_origin, w_origin, self.num_classes)), (0, 3, 1, 2)) / self.temp
+        # if(ops.ReduceSum(keep_dims=False)(unsatisfied_loc, [0,1]) == 0):
+        #     res = self.transpose(self.reshape(res, (bs, h_origin, w_origin, self.num_classes)), (0, 3, 1, 2)) / self.temp
+        # else:
+        #     h_out = int(np.sqrt(self.shape(res)[0]/bs))
+        #     res = self.transpose(self.reshape(res, (bs, h_out, h_out, self.num_classes)), (0, 3, 1, 2)) / self.temp
+        
+        return res, res_idx
+
+    def init_proto(self):
+        print(f"Load proto from: '{self.init_proto_path}'")
+        with open(self.init_proto_path, 'rb') as handle:
+            init_protos = pickle.load(handle)
+        num_class = len(init_protos)
+        all_protos = list()
+        for cls_id in range(num_class):
+            all_protos.append(Tensor(np.stack(init_protos[cls_id], 0)))
+        proto_tensor = ops.stack(all_protos, 0)
+        self.proto_list = self.reshape(proto_tensor, (-1, self.in_plances))
+
+    def update_proto(self, rep, cls_id, proto_id):
+        self.proto_list[cls_id*self.num_micro_proto+proto_id, :] = self.proto_list[cls_id*self.num_micro_proto+proto_id, :] * self.momentum + (1 - self.momentum) * rep
+File Path: core/models/model_helper.py
+Content:
+import importlib
+import math
+
+import mindspore
+import mindspore.nn as nn
+import mindspore.ops as ops
+from mindspore.ops import operations as P
+from mindspore import Tensor
+
+from .decoder import Aux_Module, CosProto_Module
+
+
+class ModelBuilder(nn.Cell):
+    def __init__(self, net_cfg, machine_name):
+        super(ModelBuilder, self).__init__()
+        self.machine_name = machine_name
+        self._sync_bn = net_cfg["sync_bn"]
+        self._num_classes = net_cfg["num_classes"]
+
+        self.encoder = self._build_encoder(net_cfg["encoder"])
+        self.decoder = self._build_decoder(net_cfg["decoder"])
+
+        self._use_auxloss = True if net_cfg.get("aux_loss", False) else False
+        self.fpn = True if net_cfg["encoder"]["kwargs"].get("fpn", False) else False
+        if self._use_auxloss:
+            cfg_aux = net_cfg["aux_loss"]
+            self.loss_weight = cfg_aux["loss_weight"]
+            self.auxor = Aux_Module(
+                cfg_aux["aux_plane"], self._num_classes, self._sync_bn
+            )
+
+        self.proto_head = True if net_cfg.get("proto_head", False) else False
+        if self.proto_head:
+            cfg_rnet = net_cfg["proto_head"]
+            self.loss_weight_rnet = cfg_rnet["loss_weight"]
+            self.patch_select = cfg_rnet["patch_select"]
+            self.select_granularity = cfg_rnet['select_granularity']
+            self.num_micro_proto = cfg_rnet['num_micro_proto']
+            self.proto_net = CosProto_Module(
+                cfg_rnet['in_planes'],
+                self._num_classes,
+                cfg_rnet['num_micro_proto'],
+                cfg_rnet['init_proto_path'],
+                cfg_rnet['proto_unpdate_momentum'],
+            )
+            
+    def _build_encoder(self, enc_cfg):
+        enc_cfg["kwargs"].update({"sync_bn": self._sync_bn})
+        enc_cfg["kwargs"].update({"machine_name": self.machine_name})
+        encoder = self._build_module(enc_cfg["type"], enc_cfg["kwargs"])
+        return encoder
+
+    def _build_decoder(self, dec_cfg):
+        dec_cfg["kwargs"].update(
+            {
+                "in_planes": self.encoder.get_outplanes(),
+                "sync_bn": self._sync_bn,
+                "num_classes": self._num_classes,
+            }
+        )
+        decoder = self._build_module(dec_cfg["type"], dec_cfg["kwargs"])
+        return decoder
+
+    def _build_module(self, mtype, kwargs):
+        module_name, class_name = mtype.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        cls = getattr(module, class_name)
+        return cls(**kwargs)
+    
+    def construct(self, x, select_mask=None, cutout_mask=None, eval=False, output_proto=False):
+        if self._use_auxloss:
+            if self.fpn:
+                # feat1 used as dsn loss as default, f1 is layer2's output as default
+                f1, f2, feat1, feat2 = self.encoder(x)
+                feat = [f1, f2, feat1, feat2]
+                outs = self.decoder(feat)
+            else:
+                feat1, feat2 = self.encoder(x)
+                outs = self.decoder(feat2)
+
+            pred_aux = self.auxor(feat[2])
+            outs.update({"aux": pred_aux})
+        else:
+            feat = self.encoder(x)
+            outs = self.decoder(feat)
+            
+        if self.proto_head and output_proto:
+            if self.patch_select:
+                _, _, h, w = x.shape
+                outs["rep_clf"] = ops.ResizeBilinear((h, w), align_corners=True)(outs["rep_clf"])
+                if eval:
+                    # evaluation phase do not need to do sampling
+                    select_mask = ops.ones((h, w), mindspore.float32)
+                    pred_proto, _ = self.proto_net(outs["rep_clf"], select_mask)
+                else:
+                    # TODO: training code transfer to mindspore
+                    # if select_mask is None:
+                    #     select_mask = self.mask_generation(h, w, self.select_granularity, x.device, cutout_mask)
+                    # outs.update({"select_mask": select_mask})
+                    # pred_proto, proto_match_idx = self.proto_net(outs["rep_clf"], select_mask)
+                    # outs.update({"proto_match_idx": proto_match_idx})
+                    pass
+            else:
+                pred_proto = self.proto_net(outs["rep_clf"])
+            outs.update({"proto": pred_proto})
+        
+        return outs
+    
+    @staticmethod
+    def mask_generation(h, w, select_granularity, device, cutout_mask=None):
+        # TODO: training code transfer to mindspore
+        # cutout_mask: since cutout_ratio is 2 which cutout half of the image, we do not want the protoclf focus on the cutout part too much
+        # assert h == w, 'h and w should be equal'
+        # select_mask = torch.zeros((h, w))
+        # if cutout_mask is None:
+        #     cutout_mask = torch.ones((h, w)).to(device)
+        # patch_size = h // select_granularity
+        # r_idx = []
+        # l_idx = []
+        # base_idx = torch.arange(select_granularity) * patch_size
+        # for _gran_idx in range(select_granularity):
+        #     _r_idx = torch.randint(patch_size, (select_granularity,))
+        #     r_idx.append(base_idx + _r_idx)
+            
+        #     _l_idx = torch.randint(patch_size, (select_granularity,)) + _gran_idx * patch_size
+        #     l_idx.append(_l_idx)
+        # r_idx_new = torch.cat(r_idx, 0)
+        # l_idx_new = torch.cat(l_idx, 0)
+        # select_mask[r_idx_new, l_idx_new] = 1
+        # select_mask = ((select_mask.to(device) + cutout_mask) == 2).float()
+        # return select_mask
+        pass
+
+    def update_proto(self, rep, select_mask, proto_match_idx, target, cond):
+        # TODO: training code transfer to mindspore
+        # rep_selected = rep.permute(0, 2, 3, 1)[:, select_mask == 1]
+        # bs, hw, c = rep_selected.shape
+        # rep_selected = rep_selected.reshape(bs*hw, c)
+        # target_selected = target[:, select_mask == 1].view(-1)
+        # valid_mask = target_selected != 255
+        # rep_selected_valid = rep_selected[valid_mask]
+        # target_selected_valid = target_selected[valid_mask]
+        # proto_match_idx_valid = proto_match_idx[valid_mask]
+        # cond_valid = cond[valid_mask]
+        # proto_match_idx_valid_target = proto_match_idx_valid[torch.arange(len(target_selected_valid)), target_selected_valid]
+
+        # rep_selected_valid_cond = rep_selected_valid[cond_valid]
+        # proto_match_idx_valid_target_cond = proto_match_idx_valid_target[cond_valid]
+        # target_selected_valid_cond = target_selected_valid[cond_valid]
+
+        # if cond_valid.sum() > 0:
+        #     shot_cls = target_selected_valid_cond.unique()
+        #     for _cls in shot_cls:
+        #         for proto_idx in range(self.num_micro_proto):
+        #             _candidate_mask = torch.logical_and(target_selected_valid_cond == _cls, proto_match_idx_valid_target_cond == proto_idx)
+        #             if _candidate_mask.sum() > 0:
+        #                 self.relation_net.update_proto(rep_selected_valid_cond[_candidate_mask].mean(0), _cls, proto_idx)
+        pass
+
+File Path: core/models/resnet.py
+Content:
+from platform import machine
+import os
+
+import mindspore.nn as nn
+import mindspore.ops as ops
+from mindspore.ops import operations as P
+from mindspore import Tensor
+
+from .base import get_syncbn
+
+__all__ = [
+    "ResNet",
+    "resnet18",
+    "resnet34",
+    "resnet50",
+    "resnet101",
+    "resnet152",
+]
+
+
+model_urls = {
+    "resnet18": "/path/to/resnet18.pth",
+    "resnet34": "/path/to/resnet34.pth",
+    "resnet50": "/path/to/resnet50.pth",
+    "resnet101": "path/to/resnet101.pth",
+    "resnet152": "/path/to/resnet152.pth",
+}
+
+
+def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
+    """3x3 convolution with padding"""
+    return nn.Conv2d(
+        in_planes,
+        out_planes,
+        kernel_size=3,
+        stride=stride,
+        padding=dilation,
+        pad_mode="pad",
+        group=groups,
+        has_bias=False,
+        dilation=dilation,
+        weight_init='xavier_uniform'
+    )
+
+
+def conv1x1(in_planes, out_planes, stride=1):
+    """1x1 convolution"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, has_bias=False)
+
+
+class BasicBlock(nn.Cell):
+    expansion = 1
+
+    def __init__(
+        self,
+        inplanes,
+        planes,
+        stride=1,
+        downsample=None,
+        groups=1,
+        base_width=64,
+        dilation=1,
+        norm_layer=None,
+    ):
+        super(BasicBlock, self).__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        if groups != 1 or base_width != 64:
+            raise ValueError("BasicBlock only supports groups=1 and base_width=64")
+        if dilation > 1:
+            raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
+        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.bn1 = norm_layer(planes)
+        self.relu = nn.ReLU()
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = norm_layer(planes)
+        self.downsample = downsample
+        self.stride = stride
+
+    def construct(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+
+class Bottleneck(nn.Cell):
+    expansion = 4
+
+    def __init__(
+        self,
+        inplanes,
+        planes,
+        stride=1,
+        downsample=None,
+        groups=1,
+        base_width=64,
+        dilation=1,
+        norm_layer=nn.BatchNorm2d,
+    ):
+        super(Bottleneck, self).__init__()
+        width = int(planes * (base_width / 64.0)) * groups
+        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv1x1(inplanes, width)
+        self.bn1 = norm_layer(width)
+        self.conv2 = conv3x3(width, width, stride, groups, dilation)
+        self.bn2 = norm_layer(width)
+        self.conv3 = conv1x1(width, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion)
+        self.relu = nn.ReLU()
+        self.downsample = downsample
+        self.stride = stride
+    
+    def construct(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+
+class ResNet(nn.Cell):
+    def __init__(
+        self,
+        block,
+        layers,
+        zero_init_residual=False,
+        groups=1,
+        width_per_group=64,
+        replace_stride_with_dilation=[False, False, False],
+        sync_bn=False,
+        multi_grid=False,
+        fpn=False,
+    ):
+        super(ResNet, self).__init__()
+        norm_layer = get_syncbn() if sync_bn else nn.BatchNorm2d
+        self._norm_layer = norm_layer
+
+        self.inplanes = 128
+        self.dilation = 1
+
+        if replace_stride_with_dilation is None:
+            # each element in the tuple indicates if we should replace
+            # the 2x2 stride with a dilated convolution instead
+            replace_stride_with_dilation = [False, False, False]
+
+        if len(replace_stride_with_dilation) != 3:
+            raise ValueError(
+                "replace_stride_with_dilation should be None "
+                "or a 3-element tuple, got {}".format(replace_stride_with_dilation)
+            )
+
+        self.groups = groups
+        self.base_width = width_per_group
+        self.fpn = fpn
+        self.conv1 = nn.SequentialCell(
+            conv3x3(3, 64, stride=2),
+            norm_layer(64),
+            nn.ReLU(),
+            conv3x3(64, 64),
+            norm_layer(64),
+            nn.ReLU(),
+            conv3x3(64, self.inplanes),
+        )
+        self.bn1 = norm_layer(self.inplanes)
+        self.relu = nn.ReLU()
+        # self.maxpool = nn.MaxPool2d(
+        #     kernel_size=3, stride=2, padding=1, ceil_mode=True
+        # )  # change
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, pad_mode="same")
+
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(
+            block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0]
+        )
+        self.layer3 = self._make_layer(
+            block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1]
+        )
+        self.layer4 = self._make_layer(
+            block,
+            512,
+            layers[3],
+            stride=2,
+            dilate=replace_stride_with_dilation[2],
+            multi_grid=multi_grid,
+        )
+
+        # for m in self.modules():
+        #     if isinstance(m, nn.Conv2d):
+        #         nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+        #     elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm, nn.SyncBatchNorm)):
+        #         nn.init.constant_(m.weight, 1)
+        #         nn.init.constant_(m.bias, 0)
+
+        # # Zero-initialize the last BN in each residual branch,
+        # # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+        # if zero_init_residual:
+        #     for m in self.modules():
+        #         if isinstance(m, Bottleneck):
+        #             nn.init.constant_(m.bn3.weight, 0)
+        #         elif isinstance(m, BasicBlock):
+        #             nn.init.constant_(m.bn2.weight, 0)
+
+    def get_outplanes(self):
+        return self.inplanes
+
+    def get_auxplanes(self):
+        return self.inplanes // 2
+
+    def _make_layer(
+        self, block, planes, blocks, stride=1, dilate=False, multi_grid=False
+    ):
+        norm_layer = self._norm_layer
+        downsample = None
+        previous_dilation = self.dilation
+        if dilate:
+            self.dilation *= stride
+            stride = 1
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.SequentialCell(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                norm_layer(planes * block.expansion),
+            )
+
+        grids = [1] * blocks
+        if multi_grid:
+            grids = [2, 2, 4]
+
+        layers = []
+        layers.append(
+            block(
+                self.inplanes,
+                planes,
+                stride,
+                downsample,
+                self.groups,
+                self.base_width,
+                previous_dilation * grids[0],
+                norm_layer,
+            )
+        )
+        self.inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(
+                block(
+                    self.inplanes,
+                    planes,
+                    groups=self.groups,
+                    base_width=self.base_width,
+                    dilation=self.dilation * grids[i],
+                    norm_layer=norm_layer,
+                )
+            )
+
+        return nn.SequentialCell(*layers)
+    
+    def construct(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x1 = x
+        x = self.layer2(x)
+        x2 = x
+        x3 = self.layer3(x)
+        x4 = self.layer4(x3)
+        if self.fpn:
+            return [x1, x2, x3, x4]
+        else:
+            return [x3, x4]
+
+
+def resnet18(pretrained=False, **kwargs):
+    """Constructs a ResNet-18 model.
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+    if pretrained:
+        model_url = model_urls["resnet18"]
+        state_dict = torch.load(model_url)
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print(
+            f"[Info] Load ImageNet pretrain from '{model_url}'",
+            "\nmissing_keys: ",
+            missing_keys,
+            "\nunexpected_keys: ",
+            unexpected_keys,
+        )
+    return model
+
+
+def resnet34(pretrained=False, **kwargs):
+    """Constructs a ResNet-34 model.
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
+    if pretrained:
+        model_url = model_urls["resnet34"]
+        state_dict = torch.load(model_url)
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print(
+            f"[Info] Load ImageNet pretrain from '{model_url}'",
+            "\nmissing_keys: ",
+            missing_keys,
+            "\nunexpected_keys: ",
+            unexpected_keys,
+        )
+    return model
+
+
+def resnet50(pretrained=False, **kwargs):
+    """Constructs a ResNet-50 model.
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    if pretrained:
+        model_url = model_urls["resnet50"]
+        state_dict = torch.load(model_url)
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print(
+            f"[Info] Load ImageNet pretrain from '{model_url}'",
+            "\nmissing_keys: ",
+            missing_keys,
+            "\nunexpected_keys: ",
+            unexpected_keys,
+        )
+    return model
+
+
+def resnet101(pretrained=False, machine_name='cloud', **kwargs):
+    """Constructs a ResNet-101 model.
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
+    if pretrained:
+        model_url = model_urls["resnet101"]
+        state_dict = torch.load(model_url)
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print(
+            f"[Info] Load ImageNet pretrain from '{model_url}'",
+            "\nmissing_keys: ",
+            missing_keys,
+            "\nunexpected_keys: ",
+            unexpected_keys,
+        )
+    return model
+
+
+def resnet152(pretrained=False, **kwargs):
+    """Constructs a ResNet-152 model.
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
+    if pretrained:
+        model_url = model_urls["resnet152"]
+        state_dict = torch.load(model_url)
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print(
+            f"[Info] Load ImageNet pretrain from '{model_url}'",
+            "\nmissing_keys: ",
+            missing_keys,
+            "\nunexpected_keys: ",
+            unexpected_keys,
+        )
+    return model
+
+File Path: core/utils/utils.py
+Content:
+import logging
+import os
+import random
+from collections import OrderedDict
+
+import numpy as np
+from PIL import Image
+
+from skimage.measure import label, regionprops
+
+
+def get_world_size():
+    if not dist.is_available():
+        return 1
+    if not dist.is_initialized():
+        return 1
+    return dist.get_world_size()
+
+
+def get_rank():
+    if not dist.is_available():
+        return 0
+    if not dist.is_initialized():
+        return 0
+    return dist.get_rank()
+
+
+def is_main_process():
+    return get_rank() == 0
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self, length=0):
+        self.length = length
+        self.reset()
+
+    def reset(self):
+        if self.length > 0:
+            self.history = []
+        else:
+            self.count = 0
+            self.sum = 0.0
+        self.val = 0.0
+        self.avg = 0.0
+
+    def update(self, val, num=1):
+        if self.length > 0:
+            # currently assert num==1 to avoid bad usage, refine when there are some explict requirements
+            assert num == 1
+            self.history.append(val)
+            if len(self.history) > self.length:
+                del self.history[0]
+
+            self.val = self.history[-1]
+            self.avg = np.mean(self.history)
+        else:
+            self.val = val
+            self.sum += val * num
+            self.count += num
+            self.avg = self.sum / self.count
+
+
+logs = set()
+
+
+def init_log(name, level=logging.INFO):
+    if (name, level) in logs:
+        return
+    logs.add((name, level))
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    ch = logging.StreamHandler()
+    ch.setLevel(level)
+    if "SLURM_PROCID" in os.environ:
+        rank = int(os.environ["SLURM_PROCID"])
+        logger.addFilter(lambda record: rank == 0)
+    else:
+        rank = 0
+    format_str = "[%(asctime)s][%(levelname)8s] %(message)s"
+    formatter = logging.Formatter(format_str)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    return logger
+
+
+def convert_state_dict(state_dict):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k[7:]  # remove `module.`
+        new_state_dict[name] = v
+    return new_state_dict
+    
+
+def accuracy(output, target, topk=(1,)):
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
+
+
+def colorize(mask, colormap):
+    color_mask = np.zeros([mask.shape[0], mask.shape[1], 3])
+    for i in np.unique(mask):
+        color_mask[mask == i] = colormap[i]
+
+    return Image.fromarray(np.uint8(color_mask))
+
+
+def check_mkdir(dir_name):
+    if not os.path.exists(dir_name):
+        os.mkdir(dir_name)
+
+
+def check_makedirs(dir_name):
+    if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
+
+
+def get_palette(num_cls):
+    """Returns the color map for visualizing the segmentation mask.
+    Args:
+        num_cls: Number of classes
+    Returns:
+        The color map
+    """
+    n = num_cls
+    palette = [0] * (n * 3)
+    for j in range(0, n):
+        lab = j
+        palette[j * 3 + 0] = 0
+        palette[j * 3 + 1] = 0
+        palette[j * 3 + 2] = 0
+        i = 0
+        while lab:
+            palette[j * 3 + 0] |= ((lab >> 0) & 1) << (7 - i)
+            palette[j * 3 + 1] |= ((lab >> 1) & 1) << (7 - i)
+            palette[j * 3 + 2] |= ((lab >> 2) & 1) << (7 - i)
+            i += 1
+            lab >>= 3
+    return palette
+
+
+def intersectionAndUnion(output, target, K, ignore_index=255):
+    # 'K' classes, output and target sizes are N or N * L or N * H * W, each value in range 0 to K - 1.
+    assert output.ndim in [1, 2, 3]
+    assert output.shape == target.shape
+    output = output.reshape(output.size).copy()
+    target = target.reshape(target.size)
+    output[np.where(target == ignore_index)[0]] = ignore_index
+    intersection = output[np.where(output == target)[0]]
+    area_intersection, _ = np.histogram(intersection, bins=np.arange(K + 1))
+    area_output, _ = np.histogram(output, bins=np.arange(K + 1))
+    area_target, _ = np.histogram(target, bins=np.arange(K + 1))
+    area_union = area_output + area_target - area_intersection
+    return area_intersection, area_union, area_target
+
+
+def load_state(path, model, optimizer=None, key="state_dict", distributed_flag=True, self_define_ignore_keys=[]):
+    if distributed_flag:
+        rank = dist.get_rank()
+    else:
+        rank = 0
+
+    def map_func(storage, location):
+        return storage.cuda()
+
+    if os.path.isfile(path):
+        if rank == 0:
+            print("=> loading checkpoint '{}'".format(path))
+
+        checkpoint = torch.load(path, map_location=map_func)
+
+        # fix size mismatch error
+        ignore_keys = []
+        state_dict = checkpoint[key]
+
+        if not distributed_flag:
+            for key in list(state_dict.keys()):
+                if 'module' in key:
+                    state_dict[key.replace('module.', '')] = state_dict.pop(key)
+
+        for k, v in state_dict.items():
+            continue_flag = False
+            for _key in self_define_ignore_keys:
+                if _key in k:
+                    ignore_keys.append(k)
+                    continue_flag = True
+            if continue_flag:
+                continue
+            if k in model.state_dict().keys():
+                v_dst = model.state_dict()[k]
+                if v.shape != v_dst.shape:
+                    ignore_keys.append(k)
+                    if rank == 0:
+                        print(
+                            "caution: size-mismatch key: {} size: {} -> {}".format(
+                                k, v.shape, v_dst.shape
+                            )
+                        )
+        # import pdb; pdb.set_trace()
+        for k in ignore_keys:
+            # checkpoint.pop(k)
+            state_dict.pop(k)
+
+        model.load_state_dict(state_dict, strict=False)
+
+        if rank == 0:
+            ckpt_keys = set(state_dict.keys())
+            own_keys = set(model.state_dict().keys())
+            missing_keys = own_keys - ckpt_keys
+            for k in missing_keys:
+                print("caution: missing keys from checkpoint {}: {}".format(path, k))
+
+        if optimizer is not None:
+            best_metric = checkpoint["best_miou"]
+            last_iter = checkpoint["epoch"]
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            if rank == 0:
+                print(
+                    "=> also loaded optimizer from checkpoint '{}' (epoch {})".format(
+                        path, last_iter
+                    )
+                )
+            return best_metric, last_iter
+    else:
+        if rank == 0:
+            print("=> no checkpoint found at '{}'".format(path))
+
+
+def create_cityscapes_label_colormap():
+    """Creates a label colormap used in CityScapes segmentation benchmark.
+    Returns:
+        A colormap for visualizing segmentation results.
+    """
+    colormap = np.zeros((256, 3), dtype=np.uint8)
+    colormap[0] = [128, 64, 128]
+    colormap[1] = [244, 35, 232]
+    colormap[2] = [70, 70, 70]
+    colormap[3] = [102, 102, 156]
+    colormap[4] = [190, 153, 153]
+    colormap[5] = [153, 153, 153]
+    colormap[6] = [250, 170, 30]
+    colormap[7] = [220, 220, 0]
+    colormap[8] = [107, 142, 35]
+    colormap[9] = [152, 251, 152]
+    colormap[10] = [70, 130, 180]
+    colormap[11] = [220, 20, 60]
+    colormap[12] = [255, 0, 0]
+    colormap[13] = [0, 0, 142]
+    colormap[14] = [0, 0, 70]
+    colormap[15] = [0, 60, 100]
+    colormap[16] = [0, 80, 100]
+    colormap[17] = [0, 0, 230]
+    colormap[18] = [119, 11, 32]
+
+    return colormap
+
+
+def create_pascal_label_colormap():
+    """Creates a label colormap used in Pascal segmentation benchmark.
+    Returns:
+        A colormap for visualizing segmentation results.
+    """
+    colormap = 255 * np.ones((256, 3), dtype=np.uint8)
+    colormap[0] = [0, 0, 0]
+    colormap[1] = [128, 0, 0]
+    colormap[2] = [0, 128, 0]
+    colormap[3] = [128, 128, 0]
+    colormap[4] = [0, 0, 128]
+    colormap[5] = [128, 0, 128]
+    colormap[6] = [0, 128, 128]
+    colormap[7] = [128, 128, 128]
+    colormap[8] = [64, 0, 0]
+    colormap[9] = [192, 0, 0]
+    colormap[10] = [64, 128, 0]
+    colormap[11] = [192, 128, 0]
+    colormap[12] = [64, 0, 128]
+    colormap[13] = [192, 0, 128]
+    colormap[14] = [64, 128, 128]
+    colormap[15] = [192, 128, 128]
+    colormap[16] = [0, 64, 0]
+    colormap[17] = [128, 64, 0]
+    colormap[18] = [0, 192, 0]
+    colormap[19] = [128, 192, 0]
+    colormap[20] = [0, 64, 128]
+
+    return colormap
+
+
+def create_pascal_label_colormap_cluster():
+    """Creates a label colormap used in Pascal segmentation benchmark.
+    Returns:
+        A colormap for visualizing segmentation results.
+    """
+    colormap = 255 * np.ones((256, 3), dtype=np.uint8)
+    colormap[0] = [0, 0, 0]
+    colormap[1] = [0, 0, 100]
+    colormap[2] = [0, 100, 0]
+    colormap[3] = [0, 100, 100]
+
+    colormap[4] = [128, 0, 0]
+    colormap[5] = [128, 0, 100]
+    colormap[6] = [128, 100, 0]
+    colormap[7] = [128, 100, 100]
+
+    colormap[8] = [0, 128, 0]
+    colormap[9] = [0, 128, 50]
+    colormap[10] = [50, 128, 0]
+    colormap[11] = [50, 128, 50]
+
+    colormap[12] = [128, 128, 0]
+    colormap[13] = [128, 128, 50]
+    colormap[14] = [128, 128, 100]
+    colormap[15] = [128, 128, 200]
+
+    colormap[16] = [0, 0, 128]
+    colormap[17] = [50, 0, 128]
+    colormap[18] = [50, 50, 128]
+    colormap[19] = [50, 100, 128]
+
+    colormap[20] = [128, 0, 128]
+    colormap[21] = [128, 50, 128]
+    colormap[22] = [128, 100, 128]
+    colormap[23] = [128, 150, 128]
+
+    colormap[24] = [0, 128, 128]
+    colormap[25] = [50, 128, 128]
+    colormap[26] = [100, 128, 128]
+    colormap[27] = [200, 128, 128]
+
+    colormap[28] = [128, 128, 128]
+    colormap[29] = [128, 0, 128]
+    colormap[30] = [128, 200, 128]
+    colormap[31] = [128, 150, 128]
+
+    colormap[32] = [64, 0, 0]
+    colormap[33] = [64, 50, 0]
+    colormap[34] = [64, 0, 100]
+    colormap[35] = [64, 100, 0]
+
+    colormap[36] = [192, 0, 0]
+    colormap[37] = [192, 0, 50]
+    colormap[38] = [192, 100, 0]
+    colormap[39] = [192, 0, 150]
+
+    colormap[40] = [64, 128, 0]
+    colormap[41] = [64, 128, 50]
+    colormap[42] = [64, 128, 100]
+    colormap[43] = [64, 128, 200]
+
+    colormap[44] = [192, 128, 0]
+    colormap[45] = [192, 128, 50]
+    colormap[46] = [192, 128, 100]
+    colormap[47] = [192, 128, 150]
+
+    colormap[48] = [64, 0, 128]
+    colormap[49] = [64, 50, 128]
+    colormap[50] = [64, 100, 128]
+    colormap[51] = [64, 150, 128]
+
+    colormap[52] = [192, 0, 128]
+    colormap[53] = [192, 50, 128]
+    colormap[54] = [192, 100, 128]
+    colormap[55] = [192, 150, 128]
+
+    colormap[56] = [64, 128, 128]
+    colormap[57] = [100, 128, 128]
+    colormap[58] = [200, 128, 128]
+    colormap[59] = [250, 128, 128]
+
+    colormap[60] = [192, 128, 128]
+    colormap[61] = [192, 128, 0]
+    colormap[62] = [192, 128, 50]
+    colormap[63] = [192, 128, 200]
+
+    colormap[64] = [0, 64, 0]
+    colormap[65] = [0, 64, 50]
+    colormap[66] = [100, 64, 0]
+    colormap[67] = [0, 64, 100]
+
+    colormap[68] = [128, 64, 0]
+    colormap[69] = [128, 64, 50]
+    colormap[70] = [128, 64, 100]
+    colormap[71] = [128, 64, 200]
+
+    colormap[72] = [0, 192, 0]
+    colormap[73] = [50, 192, 0]
+    colormap[74] = [0, 192, 100]
+    colormap[75] = [100, 192, 0]
+
+    colormap[76] = [128, 192, 0]
+    colormap[77] = [128, 192, 50]
+    colormap[78] = [128, 192, 100]
+    colormap[79] = [128, 192, 200]
+
+    colormap[80] = [0, 64, 128]
+    colormap[81] = [50, 64, 128]
+    colormap[82] = [100, 64, 128]
+    colormap[83] = [200, 64, 128]
+
+    return colormap
+
+File Path: eval.py
+Content:
+import logging
+import os
+import time
+from argparse import ArgumentParser
+
+import numpy as np
+
+import mindspore
+from mindspore import Tensor
+from mindspore import ops
+
+import yaml
+from PIL import Image
+
+from core.models.model_helper import ModelBuilder
+from core.utils.utils import (
+    AverageMeter, 
+    check_makedirs, 
+    colorize, 
+    convert_state_dict, 
+    create_cityscapes_label_colormap, 
+    create_pascal_label_colormap, 
+    intersectionAndUnion
+)
+
+
+# Setup Parser
+def get_parser():
+    parser = ArgumentParser(description="Mindspore Evaluation")
+    parser.add_argument(
+        "--base_size", type=int, default=2048, help="based size for scaling"
+    )
+    parser.add_argument(
+        "--scales", type=float, default=[1.0], nargs="+", help="evaluation scales"
+    )
+    parser.add_argument("--config", type=str, default="config.yaml")
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="checkpoints/psp_best.pth",
+        help="evaluation model path",
+    )
+    parser.add_argument(
+        "--save_folder",
+        type=str,
+        default="checkpoints/results/",
+        help="results save folder",
+    )
+    parser.add_argument(
+        "--names_path",
+        type=str,
+        default="../../vis_meta/cityscapes/cityscapesnames.mat",
+        help="path of dataset category names",
+    )
+    parser.add_argument(
+        "--crop", action="store_true", default=False, help="whether use crop evaluation"
+    )
+    parser.add_argument("--machine_name", default='cloud', type=str)
+    return parser
+
+
+def get_logger():
+    logger_name = "main-logger"
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    fmt = "[%(asctime)s %(levelname)s %(filename)s line %(lineno)d %(process)d] %(message)s"
+    handler.setFormatter(logging.Formatter(fmt))
+    logger.addHandler(handler)
+    return logger
+
+
+def main():
+    global args, logger, cfg, colormap
+    args = get_parser().parse_args()
+    cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
+    logger = get_logger()
+    logger.info(args)
+
+    if args.machine_name == 'YOUR_MACHINE_NAME':
+        output_basic_path = 'YOUR_OUTPUT_BASIC_PATH'
+        dataset_basic_path = 'YOUR_DATASET_BASIC_PATH'
+    else:
+        output_basic_path = '../../../../'
+        dataset_basic_path = '../../../../'
+    cfg["exp_path"] = os.path.join(output_basic_path, cfg["saver"]["main_dir"])
+    cfg["dataset"]["train"]["data_root"] = os.path.join(dataset_basic_path, cfg["dataset"]["train"]["data_root"])
+    cfg["dataset"]["val"]["data_root"] = os.path.join(dataset_basic_path, cfg["dataset"]["val"]["data_root"])
+    if cfg["net"].get('relation_net_head', False):
+        cfg["net"]["relation_net_head"]["init_proto_path"] = os.path.join(output_basic_path, cfg["net"]["relation_net_head"]["init_proto_path"])
+
+    cfg["save_path"] = os.path.join(cfg["exp_path"], cfg["saver"]["snapshot_dir"])
+    cfg["saver"]["snapshot_dir"] = os.path.join(cfg["exp_path"], cfg["saver"]["snapshot_dir"])
+    args.model_path = os.path.join(cfg["saver"]["snapshot_dir"], args.model_path)
+
+    cfg_dset = cfg["dataset"]
+    mean, std = cfg_dset["mean"], cfg_dset["std"]
+    num_classes = cfg["net"]["num_classes"]
+    crop_size = cfg_dset["val"]["crop"]["size"]
+    crop_h, crop_w = crop_size
+
+    assert num_classes > 1
+    
+    gray_folder = os.path.join(cfg["exp_path"], "gray")
+    color_folder = os.path.join(cfg["exp_path"], "color")
+    os.makedirs(gray_folder, exist_ok=True)
+    os.makedirs(color_folder, exist_ok=True)
+
+    # mindspore.context.set_context(mode=mindspore.context.GRAPH_MODE, device_target="CPU")
+    mindspore.context.set_context(mode=mindspore.context.PYNATIVE_MODE, device_target="GPU")
+
+    cfg_dset = cfg["dataset"]
+    data_root, f_data_list = cfg_dset["val"]["data_root"], cfg_dset["val"]["data_list"]
+    data_list = []
+
+    if "cityscapes" in data_root:
+        colormap = create_cityscapes_label_colormap()
+        for line in open(f_data_list, "r"):
+            arr = [
+                line.strip(),
+                "gtFine/" + line.strip()[12:-15] + "gtFine_labelTrainIds.png",
+            ]
+            arr = [os.path.join(data_root, item) for item in arr]
+            data_list.append(arr)
+
+    else:
+        colormap = create_pascal_label_colormap()
+        for line in open(f_data_list, "r"):
+            arr = [
+                "JPEGImages/{}.jpg".format(line.strip()),
+                "SegmentationClassAug/{}.png".format(line.strip()),
+            ]
+            arr = [os.path.join(data_root, item) for item in arr]
+            data_list.append(arr)
+
+    # Create network.
+    args.use_auxloss = True if cfg["net"].get("aux_loss", False) else False
+    logger.info("=> creating model from '{}' ...".format(args.model_path))
+
+    cfg["net"]["sync_bn"] = False
+    model = ModelBuilder(cfg["net"], args.machine_name)
+
+    checkpoint = mindspore.load_checkpoint(args.model_path)
+    logger.info("=> load teacher checkpoint")
+    saved_state_dict = convert_state_dict(checkpoint)
+    param_not_load = mindspore.load_param_into_net(model, saved_state_dict)
+    # logger.info(f"param not load: {param_not_load}")
+    logger.info("Load Model Done!")
+
+    if "cityscapes" in cfg["dataset"]["type"]:
+        validate_city(
+            model,
+            num_classes,
+            data_list,
+            mean,
+            std,
+            args.base_size,
+            crop_h,
+            crop_w,
+            args.scales,
+            gray_folder,
+            color_folder,
+        )
+    else:
+        valiadte_whole(
+            model,
+            num_classes,
+            data_list,
+            mean,
+            std,
+            args.scales,
+            gray_folder,
+            color_folder,
+        )
+
+
+def net_process(model, image, output_proto=False):
+    b, c, h, w = image.shape
+    output = model(image, eval=True, output_proto=output_proto)
+    linear_clf_output = output["pred"]
+    linear_clf_output = ops.interpolate(linear_clf_output, roi=None, scales=None, sizes=(h, w), coordinate_transformation_mode="align_corners", mode="bilinear")
+    if output_proto:
+        if "proto" in output:
+            proto_clf_output = output["proto"]
+        else:
+            proto_clf_output = None
+        return ops.Squeeze(0)(linear_clf_output), ops.Squeeze(0)(proto_clf_output)
+    else:
+        return ops.Squeeze(0)(linear_clf_output)
+
+
+def scale_crop_process(model, image, classes, crop_h, crop_w, h, w, stride_rate=2 / 3):
+    ori_h, ori_w = image.shape[-2:]
+    pad_h = max(crop_h - ori_h, 0)
+    pad_w = max(crop_w - ori_w, 0)
+    pad_h_half = int(pad_h / 2)
+    pad_w_half = int(pad_w / 2)
+    if pad_h > 0 or pad_w > 0:
+        border = (pad_w_half, pad_w - pad_w_half, pad_h_half, pad_h - pad_h_half)
+        image = ops.pad(image, border, mode="constant", value=0.0)
+    new_h, new_w = image.shape[-2:]
+    stride_h = int(np.ceil(crop_h * stride_rate))
+    stride_w = int(np.ceil(crop_w * stride_rate))
+    grid_h = int(np.ceil(float(new_h - crop_h) / stride_h) + 1)
+    grid_w = int(np.ceil(float(new_w - crop_w) / stride_w) + 1)
+    prediction_crop =  ops.zeros((1, classes, new_h, new_w), mindspore.float32)
+    count_crop =  ops.zeros((new_h, new_w), mindspore.float32)
+    for index_h in range(0, grid_h):
+        for index_w in range(0, grid_w):
+            s_h = index_h * stride_h
+            e_h = min(s_h + crop_h, new_h)
+            s_h = e_h - crop_h
+            s_w = index_w * stride_w
+            e_w = min(s_w + crop_w, new_w)
+            s_w = e_w - crop_w
+            image_crop = image[:, :, s_h:e_h, s_w:e_w]
+            count_crop[s_h:e_h, s_w:e_w] += 1
+            prediction_crop[:, :, s_h:e_h, s_w:e_w] += net_process(model, image_crop)
+
+    prediction_crop /= count_crop
+    prediction_crop = prediction_crop[
+        :, :, pad_h_half : pad_h_half + ori_h, pad_w_half : pad_w_half + ori_w
+    ]
+    prediction = ops.interpolate(prediction_crop, roi=None, scales=None, sizes=(h, w), coordinate_transformation_mode="align_corners", mode="bilinear")
+    return ops.Squeeze(0)(prediction)
+
+
+def scale_whole_process(model, image, h, w):
+    linear_clf_output, proto_clf_output = net_process(model, image, output_proto=True)
+    return linear_clf_output, proto_clf_output
+
+
+def validate_city(
+    model,
+    classes,
+    data_list,
+    mean,
+    std,
+    base_size,
+    crop_h,
+    crop_w,
+    scales,
+    gray_folder,
+    color_folder,
+):
+    global colormap
+    logger.info(">>>>>>>>>>>>>>>> Start Crop Evaluation >>>>>>>>>>>>>>>>")
+    data_time = AverageMeter()
+    batch_time = AverageMeter()
+    intersection_meter = AverageMeter()
+    union_meter = AverageMeter()
+
+    model.set_train(False)
+    end = time.time()
+    for i, (input_pth, label_path) in enumerate(data_list):
+        data_time.update(time.time() - end)
+        image = Image.open(input_pth).convert("RGB")
+        image = np.asarray(image).astype(np.float32)
+        label = Image.open(label_path).convert("L")
+        label = np.asarray(label).astype(np.uint8)
+
+        image = (image - mean) / std
+        image = ops.Transpose()(Tensor(image, mindspore.float32), (2, 0, 1))
+        image = ops.expand_dims(image, 0)
+        
+        h, w = image.shape[-2:]
+        prediction = ops.zeros((classes, h, w), mindspore.float32)
+        for scale in scales:
+            long_size = round(scale * base_size)
+            new_h = long_size
+            new_w = long_size
+            if h > w:
+                new_w = round(long_size / float(h) * w)
+            else:
+                new_h = round(long_size / float(w) * h)
+            # image_scale = ops.interpolate(image, roi=None, scales=None, sizes=(new_h, new_w), coordinate_transformation_mode="align_corners", mode="bilinear")
+            image_scale = ops.ResizeBilinear((new_h, new_w), align_corners=True)(image)
+            prediction += scale_crop_process(
+                model, image_scale, classes, crop_h, crop_w, h, w
+            )
+        prediction = ops.ArgMaxWithValue(axis=0)(prediction)[0].asnumpy()
+        batch_time.update(time.time() - end)
+        end = time.time()
+        if (i + 1) % 10 == 0:
+            logger.info(
+                "Test: [{}/{}] "
+                "Data {data_time.val:.3f} ({data_time.avg:.3f}) "
+                "Batch {batch_time.val:.3f} ({batch_time.avg:.3f}).".format(
+                    i + 1, len(data_list), data_time=data_time, batch_time=batch_time
+                )
+            )
+        gray = np.uint8(prediction)
+        color = colorize(gray, colormap)
+
+        image_path, _ = data_list[i]
+        image_name = image_path.split("/")[-1].split(".")[0]
+        color_path = os.path.join(color_folder, image_name + ".png")
+        # color.save(color_path)
+
+        intersection, union, target = intersectionAndUnion(gray, label, classes)
+        intersection_meter.update(intersection)
+        union_meter.update(union)
+
+    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
+    for i, iou in enumerate(iou_class):
+        logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
+    logger.info(" * mIoU {:.2f}".format(np.mean(iou_class) * 100))
+    logger.info("<<<<<<<<<<<<<<<<< End Crop Evaluation <<<<<<<<<<<<<<<<<")
+
+
+def valiadte_whole(
+    model, classes, data_list, mean, std, scales, gray_folder, color_folder
+):
+    logger.info(">>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>")
+    data_time = AverageMeter()
+    batch_time = AverageMeter()
+    intersection_meter_linear = AverageMeter()
+    intersection_meter_proto = AverageMeter()
+    union_meter_linear = AverageMeter()
+    union_meter_proto = AverageMeter()
+
+    model.set_train(False)
+    end = time.time()
+    for i, (input_pth, label_path) in enumerate(data_list):
+        data_time.update(time.time() - end)
+        image = Image.open(input_pth).convert("RGB")
+        image = np.asarray(image).astype(np.float32)
+        label = Image.open(label_path).convert("L")
+        label = np.asarray(label).astype(np.uint8)
+
+        image = (image - mean) / std
+        image = ops.Transpose()(Tensor(image, mindspore.float32), (2, 0, 1))
+        image = ops.expand_dims(image, 0)
+
+        h, w = image.shape[-2:]
+        prediction_linear = ops.zeros((classes, h, w), mindspore.float32)
+        prediction_proto = ops.zeros((classes, h, w), mindspore.float32)
+        for scale in scales:
+            new_h = round(h * scale)
+            new_w = round(w * scale)
+            # image_scale = ops.interpolate(image, roi=None, scales=None, sizes=(new_h, new_w), coordinate_transformation_mode="align_corners", mode="bilinear")
+            image_scale = ops.ResizeBilinear((new_h, new_w), align_corners=True)(image)
+            linear_clf_output, proto_clf_output = scale_whole_process(model, image_scale, h, w)
+            prediction_linear += linear_clf_output
+            prediction_proto += proto_clf_output
+        prediction_linear = ops.ArgMaxWithValue(axis=0)(prediction_linear)[0].asnumpy()
+        prediction_proto = ops.ArgMaxWithValue(axis=0)(prediction_proto)[0].asnumpy()
+        ##############attention###############
+        batch_time.update(time.time() - end)
+        end = time.time()
+        if (i + 1) % 10 == 0:
+            logger.info(
+                "Test: [{}/{}] "
+                "Data {data_time.val:.3f} ({data_time.avg:.3f}) "
+                "Batch {batch_time.val:.3f} ({batch_time.avg:.3f}).".format(
+                    i + 1, len(data_list), data_time=data_time, batch_time=batch_time
+                )
+            )
+        check_makedirs(gray_folder)
+        check_makedirs(color_folder)
+
+        gray_linear = np.uint8(prediction_linear)
+        intersection_linear, union_linear, target = intersectionAndUnion(gray_linear, label, classes)
+        intersection_meter_linear.update(intersection_linear)
+        union_meter_linear.update(union_linear)
+
+        gray_proto = np.uint8(prediction_proto)
+        intersection_proto, union_proto, target = intersectionAndUnion(gray_proto, label, classes)
+        intersection_meter_proto.update(intersection_proto)
+        union_meter_proto.update(union_proto)
+
+        color = colorize(gray_linear, colormap)
+        image_path, _ = data_list[i]
+        image_name = image_path.split("/")[-1].split(".")[0]
+        gray_path = os.path.join(gray_folder, image_name + ".png")
+        color_path = os.path.join(color_folder, image_name + ".png")
+        gray = Image.fromarray(gray_linear)
+        # gray.save(gray_path)
+        # color.save(color_path)
+    
+    iou_class_linear = intersection_meter_linear.sum / (union_meter_linear.sum + 1e-10)
+    iou_class_proto = intersection_meter_proto.sum / (union_meter_proto.sum + 1e-10)
+    for i, iou in enumerate(iou_class_linear):
+        logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
+    logger.info(" * linear head mIoU {:.2f}".format(np.mean(iou_class_linear) * 100))
+    logger.info(" * proto head mIoU {:.2f}".format(np.mean(iou_class_proto) * 100))
+    logger.info("<<<<<<<<<<<<<<<<< End  Evaluation <<<<<<<<<<<<<<<<<")
+
+
+if __name__ == "__main__":
+    main()
+
+Output:
+{
+    "experimental_code": "class Cutmix(object):    \"\"\"Randomly mask out one or more patches from an image.    Args:        n_holes (int): Number of patches to cut out of each image.        length (int): The length (in pixels) of each square patch.    \"\"\"    def __init__(        self, prop_range, n_holes=1, random_aspect_ratio=True, within_bounds=True    ):        self.n_holes = n_holes        if isinstance(prop_range, float):            self.prop_range = (prop_range, prop_range)        self.random_aspect_ratio = random_aspect_ratio        self.within_bounds = within_bounds    def __call__(self, img, label):        \"\"\"        Args:            img (Tensor): Tensor image of size (C, H, W).        Returns:            Tensor: Image with n_holes of dimension length x length cut out of it.        \"\"\"        # img 1,3,h,w  label 1,1,h,w        h = img.size(2)        w = img.size(3)        n_masks = img.size(0)        # mask = np.ones((h, w), np.float32)        # valid = np.zeros((h ,w),np.float32)        mask_props = np.random.uniform(            self.prop_range[0], self.prop_range[1], size=(n_masks, self.n_holes)        )        if self.random_aspect_ratio:            y_props = np.exp(                np.random.uniform(low=0.0, high=1.0, size=(n_masks, self.n_holes))                * np.log(mask_props)            )            x_props = mask_props / y_props        else:            y_props = x_props = np.sqrt(mask_props)        fac = np.sqrt(1.0 / self.n_holes)        y_props *= fac        x_props *= fac        sizes = np.round(            np.stack([y_props, x_props], axis=2) * np.array((h, w))[None, None, :]        )        if self.within_bounds:            positions = np.round(                (np.array((h, w)) - sizes)                * np.random.uniform(low=0.0, high=1.0, size=sizes.shape)            )            rectangles = np.append(positions, positions + sizes, axis=2)        else:            centres = np.round(                np.array((h, w)) * np.uniform(low=0.0, high=1.0, size=sizes.shape)            )            rectangles = np.append(centres - sizes * 0.5, centres + sizes * 0.5, axis=2)        masks = np.zeros((n_masks, 1) + (h, w))        for i, sample_rectangles in enumerate(rectangles):            for y0, x0, y1, x1 in sample_rectangles:                masks[i, 0, int(y0) : int(y1), int(x0) : int(x1)] = 1        masks = Tensor(masks)        return img, label, masks\nclass CosProto_Module(nn.Cell):\n    def __init__(self, in_planes, num_classes, num_micro_proto, init_proto_path, proto_unpdate_momentum=0.99):\n        super(CosProto_Module, self).__init__()\n        self.in_planes = in_planes\n        self.num_classes = num_classes\n        self.num_micro_proto = num_micro_proto\n        self.init_proto_path = init_proto_path\n        self.temp = 0.1\n\n        init_proto = np.random.randn(num_micro_proto * num_classes, in_planes).astype('f')\n        self.proto_list = Parameter(init_proto, requires_grad=False)\n        self.momentum = proto_unpdate_momentum\n        # TODO: val does not need to load\n        # self.init_proto()\n        \n        # mindspre operations\n        self.shape = P.Shape()\n        self.transpose = ops.Transpose()\n        self.reshape = ops.Reshape()\n        self.einsum = ops.Einsum(\"nd,md->nm\")\n    \n    @staticmethod\n    def l2_normalize(x):\n        return ops.L2Normalize(axis=-1)(x)\n\n    def construct(self, x, select_mask):\n        bs, in_channel, h_origin, w_origin = self.shape(x)\n        \n        # x->pixel2sample: bs, C, H, W --> bs*H*W, C\n        satisfied_loc = (select_mask == 1).astype(mindspore.int32)\n        # TODO: mindspore 1.10 version does not support mask-based slice on tensor\n        # x_p2s = self.reshape(self.transpose(x, (0, 2, 3, 1))[:, satisfied_loc], (-1, self.in_planes))\n        x_p2s = self.reshape(self.transpose(x, (0, 2, 3, 1)), (-1, self.in_planes))\n        x_p2s = self.l2_normalize(x_p2s)\n\n        cur_proto = self.proto_list.clone()\n        cur_proto.requires_grad = False\n        cur_proto = self.l2_normalize(cur_proto)\n        \n        masks = self.einsum((x_p2s, cur_proto))\n        fuse_res = self.reshape(masks, (-1, self.num_classes, self.num_micro_proto))\n        res_idx, res = ops.ArgMaxWithValue(axis=2)(fuse_res)\n\n        unsatisfied_loc = (select_mask == 0).astype(mindspore.float32)\n        res = self.transpose(self.reshape(res, (bs, h_origin, w_origin, self.num_classes)), (0, 3, 1, 2)) / self.temp\n        # if(ops.ReduceSum(keep_dims=False)(unsatisfied_loc, [0,1]) == 0):\n        #     res = self.transpose(self.reshape(res, (bs, h_origin, w_origin, self.num_classes)), (0, 3, 1, 2)) / self.temp\n        # else:\n        #     h_out = int(np.sqrt(self.shape(res)[0]/bs))\n        #     res = self.transpose(self.reshape(res, (bs, h_out, h_out, self.num_classes)), (0, 3, 1, 2)) / self.temp\n        \n        return res, res_idx\n\n    def init_proto(self):\n        print(f\"Load proto from: '{self.init_proto_path}'\")\n        with open(self.init_proto_path, 'rb') as handle:\n            init_protos = pickle.load(handle)\n        num_class = len(init_protos)\n        all_protos = list()\n        for cls_id in range(num_class):\n            all_protos.append(Tensor(np.stack(init_protos[cls_id], 0)))\n        proto_tensor = ops.stack(all_protos, 0)\n        self.proto_list = self.reshape(proto_tensor, (-1, self.in_plances))\n\n    def update_proto(self, rep, cls_id, proto_id):\n        self.proto_list[cls_id*self.num_micro_proto+proto_id, :] = self.proto_list[cls_id*self.num_micro_proto+proto_id, :] * self.momentum + (1 - self.momentum) * rep\nclass ModelBuilder(nn.Cell):\n    def __init__(self, net_cfg, machine_name):\n        super(ModelBuilder, self).__init__()\n        self.machine_name = machine_name\n        self._sync_bn = net_cfg[\"sync_bn\"]\n        self._num_classes = net_cfg[\"num_classes\"]\n\n        self.encoder = self._build_encoder(net_cfg[\"encoder\"])\n        self.decoder = self._build_decoder(net_cfg[\"decoder\"])\n\n        self._use_auxloss = True if net_cfg.get(\"aux_loss\", False) else False\n        self.fpn = True if net_cfg[\"encoder\"][\"kwargs\"].get(\"fpn\", False) else False\n        if self._use_auxloss:\n            cfg_aux = net_cfg[\"aux_loss\"]\n            self.loss_weight = cfg_aux[\"loss_weight\"]\n            self.auxor = Aux_Module(\n                cfg_aux[\"aux_plane\"], self._num_classes, self._sync_bn\n            )\n\n        self.proto_head = True if net_cfg.get(\"proto_head\", False) else False\n        if self.proto_head:\n            cfg_rnet = net_cfg[\"proto_head\"]\n            self.loss_weight_rnet = cfg_rnet[\"loss_weight\"]\n            self.patch_select = cfg_rnet[\"patch_select\"]\n            self.select_granularity = cfg_rnet['select_granularity']\n            self.num_micro_proto = cfg_rnet['num_micro_proto']\n            self.proto_net = CosProto_Module(\n                cfg_rnet['in_planes'],\n                self._num_classes,\n                cfg_rnet['num_micro_proto'],\n                cfg_rnet['init_proto_path'],\n                cfg_rnet['proto_unpdate_momentum'],\n            )\n            \ndef _build_encoder(self, enc_cfg):\n        enc_cfg[\"kwargs\"].update({\"sync_bn\": self._sync_bn})\n        enc_cfg[\"kwargs\"].update({\"machine_name\": self.machine_name})\n        encoder = self._build_module(enc_cfg[\"type\"], enc_cfg[\"kwargs\"])\n        return encoder\n\n    def _build_decoder(self, dec_cfg):\n        dec_cfg[\"kwargs\"].update(\n            {\n                \"in_planes\": self.encoder.get_outplanes(),\n                \"sync_bn\": self._sync_bn,\n                \"num_classes\": self._num_classes,\n            }\n        )\n        decoder = self._build_module(dec_cfg[\"type\"], dec_cfg[\"kwargs\"])\n        return decoder\n\n    def _build_module(self, mtype, kwargs):\n        module_name, class_name = mtype.rsplit(\".\", 1)\n        module = importlib.import_module(module_name)\n        cls = getattr(module, class_name)\n        return cls(**kwargs)\n    \ndef construct(self, x, select_mask=None, cutout_mask=None, eval=False, output_proto=False):\n        if self._use_auxloss:\n            if self.fpn:\n                # feat1 used as dsn loss as default, f1 is layer2's output as default\n                f1, f2, feat1, feat2 = self.encoder(x)\n                feat = [f1, f2, feat1, feat2]\n                outs = self.decoder(feat)\n            else:\n                feat1, feat2 = self.encoder(x)\n                outs = self.decoder(feat2)\n\n            pred_aux = self.auxor(feat[2])\n            outs.update({\"aux\": pred_aux})\n        else:\n            feat = self.encoder(x)\n            outs = self.decoder(feat)\n            \n        if self.proto_head and output_proto:\n            if self.patch_select:\n                _, _, h, w = x.shape\n                outs[\"rep_clf\"] = ops.ResizeBilinear((h, w), align_corners=True)(outs[\"rep_clf\"])\n                if eval:\n                    # evaluation phase do not need to do sampling\n                    select_mask = ops.ones((h, w), mindspore.float32)\n                    pred_proto, _ = self.proto_net(outs[\"rep_clf\"], select_mask)\n                else:\n                    # TODO: training code transfer to mindspore\n                    # if select_mask is None:\n                    #     select_mask = self.mask_generation(h, w, self.select_granularity, x.device, cutout_mask)\n                    # outs.update({\"select_mask\": select_mask})\n                    # pred_proto, proto_match_idx = self.proto_net(outs[\"rep_clf\"], select_mask)\n                    # outs.update({\"proto_match_idx\": proto_match_idx})\n                    pass\n            else:\n                pred_proto = self.proto_net(outs[\"rep_clf\"])\n            outs.update({\"proto\": pred_proto})\n        \n        return outs\n    \n    @staticmethod\n    def mask_generation(h, w, select_granularity, device, cutout_mask=None):\n        # TODO: training code transfer to mindspore\n        # cutout_mask: since cutout_ratio is 2 which cutout half of the image, we do not want the protoclf focus on the cutout part too much\n        # assert h == w, 'h and w should be equal'\n        # select_mask = torch.zeros((h, w))\n        # if cutout_mask is None:\n        #     cutout_mask = torch.ones((h, w)).to(device)\n        # patch_size = h // select_granularity\n        # r_idx = []\n        # l_idx = []\n        # base_idx = torch.arange(select_granularity) * patch_size\n        # for _gran_idx in range(select_granularity):\n        #     _r_idx = torch.randint(patch_size, (select_granularity,))\n        #     r_idx.append(base_idx + _r_idx)\n            \n        #     _l_idx = torch.randint(patch_size, (select_granularity,)) + _gran_idx * patch_size\n        #     l_idx.append(_l_idx)\n        # r_idx_new = torch.cat(r_idx, 0)\n        # l_idx_new = torch.cat(l_idx, 0)\n        # select_mask[r_idx_new, l_idx_new] = 1\n        # select_mask = ((select_mask.to(device) + cutout_mask) == 2).float()\n        # return select_mask\n        pass\n\n    def update_proto(self, rep, select_mask, proto_match_idx, target, cond):\n        # TODO: training code transfer to mindspore\n        # rep_selected = rep.permute(0, 2, 3, 1)[:, select_mask == 1]\n        # bs, hw, c = rep_selected.shape\n        # rep_selected = rep_selected.reshape(bs*hw, c)\n        # target_selected = target[:, select_mask == 1].view(-1)\n        # valid_mask = target_selected != 255\n        # rep_selected_valid = rep_selected[valid_mask]\n        # target_selected_valid = target_selected[valid_mask]\n        # proto_match_idx_valid = proto_match_idx[valid_mask]\n        # cond_valid = cond[valid_mask]\n        # proto_match_idx_valid_target = proto_match_idx_valid[torch.arange(len(target_selected_valid)), target_selected_valid]\n\n        # rep_selected_valid_cond = rep_selected_valid[cond_valid]\n        # proto_match_idx_valid_target_cond = proto_match_idx_valid_target[cond_valid]\n        # target_selected_valid_cond = target_selected_valid[cond_valid]\n\n        # if cond_valid.sum() > 0:\n        #     shot_cls = target_selected_valid_cond.unique()\n        #     for _cls in shot_cls:\n        #         for proto_idx in range(self.num_micro_proto):\n        #             _candidate_mask = torch.logical_and(target_selected_valid_cond == _cls, proto_match_idx_valid_target_cond == proto_idx)\n        #             if _candidate_mask.sum() > 0:\n        #                 self.relation_net.update_proto(rep_selected_valid_cond[_candidate_mask].mean(0), _cls, proto_idx)\n        pass",
+    "experimental_info": "The method utilizes a student-teacher framework with weak and strong augmentations. For strong augmentation, CutMix is specifically applied, defined by `Cutmix` transformation (in `core/dataset/augmentation.py`) with configurable parameters like `prop_range` and `n_holes`. The framework employs two segmentation heads: a standard linear predictor (within `dec_deeplabv3_plus.classifier` in `core/models/decoder.py`) and a prototype-based predictor (`CosProto_Module` in `core/models/decoder.py`).\n\nThe `CosProto_Module` uses a cosine similarity-based approach with a temperature parameter (`self.temp = 0.1`) and maintains a list of prototypes (`self.proto_list`). Prototypes are initialized from a specified path (`init_proto_path`) and dynamically updated during training using a momentum (`proto_unpdate_momentum = 0.99`). The `ModelBuilder` (in `core/models/model_helper.py`) integrates these components, enabling a `proto_head` with specific settings like `patch_select`, `select_granularity`, and `num_micro_proto`.\n\nExperimental settings for data loading and augmentation are configured in `core/dataset/cityscapes.py` and `core/dataset/pascal_voc.py`. The `build_transfrom` function constructs augmentation pipelines, including `ToTensor`, `Normalize` (with specified mean and std values), `Resize`, `RandResize`, `RandRotate`, `RandomGaussianBlur`, `RandomHorizontalFlip`, `Crop`, `Cutout`, and `Cutmix`. The `build_city_semi_loader` and `build_voc_semi_loader` functions prepare datasets for semi-supervised learning, with `n_sup` controlling the number of supervised samples.\n\nEvaluation is performed using the `eval.py` script. It supports multi-scale inference (`args.scales`), specified `base_size`, `crop_h`, `crop_w` for evaluation, and computes mean Intersection over Union (mIoU) as the primary metric. It also logs individual class IoU scores and evaluates both the linear and prototype heads, demonstrating a consistency-based approach where both predictions are utilized for evaluation."
+}
