@@ -1,0 +1,26 @@
+# config/smoke_test.yaml
+experiment_name: smoke_test_random
+seed: 0
+mixed_precision: false
+
+output:
+  dir: smoke_outputs
+
+logging:
+  print_every: 10
+
+dataset:
+  name: RANDOM
+  num_samples: 128
+  batch_size: 16
+  workers: 0
+
+model:
+  name: TinyCNN
+  num_classes: 10
+
+adaptation:
+  method: es-tent  # {source, tent, es-tent}
+  lr: 0.01
+  h_low_coeff: 0.5
+  h_high_coeff: 1.0

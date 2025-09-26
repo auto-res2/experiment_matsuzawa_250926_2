@@ -1,0 +1,34 @@
+# config/full_experiment.yaml
+# NOTE: Dataset and model fields contain placeholders that will be replaced in
+#       subsequent experiment-specific configurations.
+experiment_name: FULL_EXPERIMENT_PLACEHOLDER
+seed: 0
+mixed_precision: true
+
+output:
+  dir: experiments
+
+logging:
+  print_every: 100
+
+dataset:
+  name: DATASET_PLACEHOLDER         # PLACEHOLDER: e.g. CIFAR10C
+  root: /path/to/dataset            # PLACEHOLDER
+  batch_size: 64
+  workers: 8
+  num_samples: 0                    # leave 0 to use full dataset
+
+model:
+  name: MODEL_PLACEHOLDER           # PLACEHOLDER: e.g. ResNet26
+  num_classes: 10                   # update accordingly
+  checkpoint: /path/to/checkpoint   # optional – pretrained weights
+
+adaptation:
+  method: es-tent                   # {source|tent|es-tent|eta}
+  lr: 0.001
+  h_low_coeff: 0.5
+  h_high_coeff: 1.0
+
+validation:
+  enable: false
+  root: /path/to/clean/val          # PLACEHOLDER
