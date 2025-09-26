@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+TWA reframes weight averaging as a subspace training task. It constructs a low-dimensional subspace from candidate weights by decoupling them through simple decentralization and normalization to form a set of basis vectors. Optimal weighting coefficients (beta) are then learned by optimizing within this subspace using gradient descent, which involves projecting gradients onto the subspace. The methodology includes a distributed training scheme that partitions the projection matrix across multiple GPUs to manage memory and computational loads. Layer-wise processing is incorporated to better utilize model structure, and the projection matrix is quantized to low-bit representations (e.g., 4 bits) to further reduce memory overhead. Two variants are proposed: TWA-t, which optimizes coefficients using training data, and TWA-v, which uses a small held-out validation set for more efficient and effective optimization, especially for fine-tuned models.
+
+# GitHub URLs List
+['https://github.com/nblt/TWA', 'https://github.com/pytorch/examples', 'https://github.com/mlfoundations/model-soups', 'https://github.com/huggingface/transformers']
+Output:
+{
+    "index": 0
+}
