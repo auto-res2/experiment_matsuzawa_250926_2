@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology casts hyperparameter optimization as a bi-level optimization problem. For non-smooth Lasso-type problems, it leverages the fixed-point iteration property of proximal BCD algorithms (such as ISTA) to derive weak Jacobians. The core technique is 'Implicit Forward Iterative Differentiation' (Algorithm 2). This method first computes the regression coefficients using a standard Lasso solver and identifies the support. Then, it applies forward iterative differentiation restricted to the identified support, which leads to efficient and stable Jacobian computation without solving large, potentially ill-conditioned linear systems (as in classical implicit differentiation, Algorithm 1) or storing all intermediate iterates (as in backward iterative differentiation). The method relies on Proposition 1, which provides closed-form, sparse Jacobian solutions for Lasso and weighted Lasso, and Proposition 2, which proves the linear convergence of the Jacobian sequence once the support is identified.
+
+# GitHub URLs List
+['https://github.com/QB3/sparse-ho', 'https://github.com/fabianp/hoag', 'https://github.com/SMTorg/smt']
+Output:
+{
+    "index": 0
+}
