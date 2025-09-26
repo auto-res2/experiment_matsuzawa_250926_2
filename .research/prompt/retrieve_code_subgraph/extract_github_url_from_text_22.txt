@@ -1,0 +1,25 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+DANCE combines self-supervised neighborhood clustering (NC) with entropy-based feature alignment and rejection (ES), augmented by domain-specific batch normalization. The network architecture uses a ResNet50 feature extractor with an L2 normalization layer before the final linear classification layer, where weight vectors act as class prototypes. 
+
+Neighborhood Clustering (NC): This self-supervised objective minimizes the entropy of each target point's similarity distribution to other target samples and source prototypes. It encourages target points to move closer to their nearest neighbors (either other target samples or source class prototypes), thereby learning well-clustered, discriminative features for the target domain. A memory bank stores target features to facilitate similarity calculations for samples outside the current mini-batch.
+
+Entropy Separation Loss (ES): This loss is applied to the entropy of the source classifier's output for target samples. It encourages the entropy to be either low (for "known" samples that should align with source prototypes) or high (for "unknown" samples that should be rejected). A predefined threshold (ρ = log(K)/2, where K is the number of source classes) and a confidence margin (m) are used to give loss only to confident samples, separating known from unknown categories.
+
+Domain-Specific Batch Normalization: Weak domain alignment is achieved by processing source and target samples in separate mini-batches.
+
+The final objective function is a weighted sum: L = L_cls + λ(L_nc + L_es), where L_cls is the cross-entropy loss on source samples and λ is a weighting hyper-parameter.
+
+# GitHub URLs List
+['https://github.com/thuml/ETN']
+Output:
+{
+    "index": 0
+}
