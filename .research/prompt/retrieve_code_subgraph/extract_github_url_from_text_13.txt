@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+FLUTE learns a universal template consisting of shared convolutional layer parameters (ResNet-18) and dataset-specific FiLM parameters (scaling and shifting coefficients for batch normalization layers). During training, the feature extractor is jointly trained across M diverse datasets. The shared convolutional weights (Φ) act as the universal template, while M distinct sets of FiLM parameters (Ψm) are learned for each training dataset. A multi-task classification loss (cross-entropy with cosine classifiers) is used, where an example's loss influences only its originating dataset's FiLM parameters but all shared convolutional parameters. Separately, a 'Blender network' is trained as a dataset classifier (a permutation-invariant set encoder followed by a linear layer) to predict the compatibility of input data with the M training datasets. At test time, for an unseen task, the Blender network is used to initialize new FiLM parameters (Ψd*) as a convex combination of the trained Ψm sets, based on the task's support set. These initialized Ψd* are then fine-tuned via a few steps of gradient descent on the support set, using a Nearest-Centroid Classifier (NCC) loss. Only Ψd* are updated during fine-tuning, while the universal template parameters Φ remain frozen.
+
+# GitHub URLs List
+['https://github.com/google-research/meta-dataset']
+Output:
+{
+    "index": 0
+}
